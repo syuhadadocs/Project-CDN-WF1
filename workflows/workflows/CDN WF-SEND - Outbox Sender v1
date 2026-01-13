@@ -1,0 +1,668 @@
+{
+  "name": "CDN WF-SEND - Outbox Sender v1",
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "d5e733f5-80d3-4180-a137-b0328e6fa53c",
+  "id": "1612",
+  "tags": [],
+  "nodes": [
+    {
+      "id": "17642d49-4ca1-4ca7-ac1f-d54d0af335c3",
+      "name": "Cron - Outbox Worker",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [
+        200,
+        200
+      ],
+      "parameters": {
+        "triggerTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "926d2952-9ec3-4d8c-b97b-9f49ba473310",
+      "name": "GS - Read Outbox",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        450,
+        200
+      ],
+      "parameters": {
+        "authentication": "oAuth2",
+        "operation": "read",
+        "documentId": "={{$env.GSHEET_ID}}",
+        "sheetName": "outbox",
+        "options": {}
+      }
+    },
+    {
+      "id": "9e0ba61f-cd46-4aa7-aa04-9544f41106e6",
+      "name": "Code - Filter Pending/Retry",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        700,
+        200
+      ],
+      "parameters": {
+        "jsCode": "const now = Date.now();\nconst rows = items.map(i=>i.json);\nconst eligible = rows.filter(r => {\n  const st = String(r.status||'').toUpperCase();\n  if (!(st === 'PENDING' || st === 'RETRY')) return false;\n  const next = r.next_retry_at ? Date.parse(r.next_retry_at) : 0;\n  return isNaN(next) || next <= now;\n}).slice(0, 10);\nreturn eligible.map(r => ({json:r}));\n"
+      }
+    },
+    {
+      "id": "ba7f06ed-5c58-41df-b57a-923b5e19d4c7",
+      "name": "Split In Batches",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 2,
+      "position": [
+        950,
+        200
+      ],
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      }
+    },
+    {
+      "id": "a223a6de-fba2-4325-9de0-223b8d2ee093",
+      "name": "Code - Build Send Idem Key",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        1200,
+        200
+      ],
+      "parameters": {
+        "jsCode": "return [{json:{...$json, send_idem_key:`send|${$json.outbox_id}`}}];"
+      }
+    },
+    {
+      "id": "f8ffde13-79bd-40f5-ac39-8fe934db2085",
+      "name": "GS - Lookup Idempotency (send)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        1450,
+        200
+      ],
+      "parameters": {
+        "authentication": "oAuth2",
+        "operation": "lookup",
+        "documentId": "={{$env.GSHEET_ID}}",
+        "sheetName": "idempotency_keys",
+        "lookupColumn": "idem_key",
+        "lookupValue": "={{$json.send_idem_key}}"
+      }
+    },
+    {
+      "id": "3da7af76-4ead-499f-9691-7ec7a7beb40c",
+      "name": "IF - Already Sent?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1700,
+        200
+      ],
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.idem_key !== undefined && $json.status === 'DONE'}}",
+              "operation": "isTrue"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "2552ac86-ae67-4e74-a1ef-f6085d93a019",
+      "name": "GS - Append Idempotency IN_PROGRESS (send)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        1950,
+        140
+      ],
+      "parameters": {
+        "authentication": "oAuth2",
+        "operation": "append",
+        "documentId": "={{$env.GSHEET_ID}}",
+        "sheetName": "idempotency_keys",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "idem_key": "={{$json.send_idem_key}}",
+            "scope": "send_message",
+            "ref_type": "outbox",
+            "ref_id": "={{$json.outbox_id}}",
+            "status": "IN_PROGRESS",
+            "created_at": "={{new Date().toISOString()}}",
+            "expires_at": "={{new Date(Date.now()+2*24*3600*1000).toISOString()}}",
+            "last_seen_at": "={{new Date().toISOString()}}",
+            "result_json": "",
+            "error_message": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "efdd15bb-833b-4c22-8aaa-d09c0b61718d",
+      "name": "Switch - Provider",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        200
+      ],
+      "parameters": {
+        "value1": "={{$json.provider}}",
+        "rules": [
+          {
+            "operation": "equal",
+            "value2": "WAHA"
+          },
+          {
+            "operation": "equal",
+            "value2": "TELEGRAM"
+          },
+          {
+            "operation": "equal",
+            "value2": "EMAIL"
+          }
+        ]
+      }
+    },
+    {
+      "id": "8d08c2e1-777e-4dd9-a5b1-d24f1f9c99f7",
+      "name": "HTTP - Send WAHA",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        2450,
+        100
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.WAHA_URL}}/api/sendText",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Api-Key",
+              "value": "={{$env.WAHA_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "jsonBody": "={{ (()=>{ const p = JSON.parse($json.payload_json||'{}'); return { session: p.session || $env.WAHA_SESSION, chatId: p.to, text: p.text }; })() }}",
+        "options": {
+          "response": {
+            "responseFormat": "json"
+          }
+        }
+      }
+    },
+    {
+      "id": "f4d8d27a-117e-417e-85df-04a95f6e9862",
+      "name": "Code - Normalize Send Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        2700,
+        100
+      ],
+      "parameters": {
+        "jsCode": "const ok = !$json.error && ($json.statusCode === undefined || ($json.statusCode >=200 && $json.statusCode < 300));\n// WAHA typically returns JSON with id or key.id; keep flexible\nconst body = $json.body || $json;\nconst provider_message_id = body.id || (body.key && body.key.id) || body.messageId || '';\nreturn [{json:{...$json, send_ok: ok, provider_message_id, send_raw: JSON.stringify(body), sent_at: new Date().toISOString()}}];\n"
+      }
+    },
+    {
+      "id": "8dd73c55-d7f3-4cd2-ac9a-88cd6dfcd06b",
+      "name": "GS - Append Outbound Message",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        2950,
+        100
+      ],
+      "parameters": {
+        "authentication": "oAuth2",
+        "operation": "append",
+        "documentId": "={{$env.GSHEET_ID}}",
+        "sheetName": "messages",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "message_id": "={{'MSG'+new Date().toISOString().slice(0,10).replaceAll('-','')+String(Math.floor(Math.random()*1e6)).padStart(6,'0')}}",
+            "provider_message_id": "={{$json.provider_message_id}}",
+            "ticket_id": "={{$json.ticket_id}}",
+            "thread_id": "={{$json.thread_id}}",
+            "direction": "OUT",
+            "channel": "={{$json.channel}}",
+            "sender": "agent",
+            "sent_at": "={{$json.sent_at}}",
+            "content": "={{ (()=>{ const p=JSON.parse($json.payload_json||'{}'); return p.text||''; })() }}",
+            "raw_json": "={{$json.send_raw}}",
+            "provider": "={{$json.provider}}",
+            "provider_event_id": "",
+            "dedupe_key": "={{$json.send_idem_key}}",
+            "intent": "",
+            "latency_ms": "",
+            "ai_json": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "3067cf8a-99be-4bb3-8243-939dbba1a0ad",
+      "name": "GS - Update Ticket After Outbound",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        3200,
+        100
+      ],
+      "parameters": {
+        "authentication": "oAuth2",
+        "operation": "update",
+        "documentId": "={{$env.GSHEET_ID}}",
+        "sheetName": "tickets",
+        "keyColumn": "ticket_id",
+        "keyValue": "={{$json.ticket_id}}",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "last_outbound_at": "={{new Date().toISOString()}}",
+            "unread_flag": "FALSE",
+            "updated_at": "={{new Date().toISOString()}}"
+          }
+        }
+      }
+    },
+    {
+      "id": "2ea9948e-4ef8-4608-8565-19e58e003c4a",
+      "name": "IF - Send OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3450,
+        100
+      ],
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.send_ok}}",
+              "operation": "isTrue"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "3c9d0d5b-0df6-4a45-976b-108f471e78e6",
+      "name": "GS - Update Outbox DELIVERED",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        3700,
+        40
+      ],
+      "parameters": {
+        "authentication": "oAuth2",
+        "operation": "update",
+        "documentId": "={{$env.GSHEET_ID}}",
+        "sheetName": "outbox",
+        "keyColumn": "outbox_id",
+        "keyValue": "={{$json.outbox_id}}",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "status": "DELIVERED",
+            "response_json": "={{$json.send_raw}}",
+            "updated_at": "={{new Date().toISOString()}}",
+            "last_attempt_at": "={{new Date().toISOString()}}",
+            "attempt_count": "={{String((Number($json.attempt_count||0)+1))}}",
+            "error_message": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "76b4b53a-4965-44d8-8fc7-b7b91c35030f",
+      "name": "GS - Update Idempotency DONE (send)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        3950,
+        40
+      ],
+      "parameters": {
+        "authentication": "oAuth2",
+        "operation": "update",
+        "documentId": "={{$env.GSHEET_ID}}",
+        "sheetName": "idempotency_keys",
+        "keyColumn": "idem_key",
+        "keyValue": "={{$json.send_idem_key}}",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "status": "DONE",
+            "last_seen_at": "={{new Date().toISOString()}}",
+            "result_json": "={{$json.send_raw}}",
+            "error_message": ""
+          }
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "26d47d09-a11f-41b3-b3be-b8d57cfca07f",
+      "name": "Code - Backoff + Mark RETRY",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        3700,
+        160
+      ],
+      "parameters": {
+        "jsCode": "const attempts = Number($json.attempt_count||0)+1;\nconst base = Number($env.OUTBOX_RETRY_BASE_SECONDS || 30);\nconst backoff = Math.min(base * Math.pow(2, attempts-1), 3600);\nreturn [{json:{...$json, attempt_count: attempts, next_retry_at: new Date(Date.now()+backoff*1000).toISOString(), error_message: ($json.error_message||'send_failed')}}];\n"
+      }
+    },
+    {
+      "id": "7159ed01-1b86-4bf6-a2a5-088e129d7f6e",
+      "name": "GS - Update Outbox RETRY",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        3950,
+        160
+      ],
+      "parameters": {
+        "authentication": "oAuth2",
+        "operation": "update",
+        "documentId": "={{$env.GSHEET_ID}}",
+        "sheetName": "outbox",
+        "keyColumn": "outbox_id",
+        "keyValue": "={{$json.outbox_id}}",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "status": "RETRY",
+            "updated_at": "={{new Date().toISOString()}}",
+            "last_attempt_at": "={{new Date().toISOString()}}",
+            "attempt_count": "={{String($json.attempt_count)}}",
+            "next_retry_at": "={{$json.next_retry_at}}",
+            "error_message": "={{$json.error_message}}",
+            "response_json": "={{$json.send_raw || ''}}"
+          }
+        }
+      }
+    },
+    {
+      "id": "fe8d07ca-3cd4-417b-b79c-65d93811df4f",
+      "name": "GS - Append Error",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        4200,
+        160
+      ],
+      "parameters": {
+        "authentication": "oAuth2",
+        "operation": "append",
+        "documentId": "={{$env.GSHEET_ID}}",
+        "sheetName": "errors",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "error_id": "={{'ERR'+new Date().toISOString().slice(0,10).replaceAll('-','')+String(Math.floor(Math.random()*1e6)).padStart(6,'0')}}",
+            "occurred_at": "={{new Date().toISOString()}}",
+            "workflow_name": "WF-SEND",
+            "workflow_id": "={{$workflow.id}}",
+            "execution_id": "={{$execution.id}}",
+            "node_name": "HTTP - Send WAHA",
+            "ticket_id": "={{$json.ticket_id}}",
+            "source_message_id": "",
+            "trace_id": "",
+            "channel": "={{$json.channel}}",
+            "direction": "OUT",
+            "severity": "error",
+            "error_message": "={{$json.error_message}}",
+            "error_stack": "",
+            "payload_json": "={{$json.payload_json}}",
+            "status": "RETRY",
+            "last_node": "HTTP - Send WAHA",
+            "provider": "={{$json.provider}}",
+            "http_status": "",
+            "retry_count": "={{String($json.attempt_count||1)}}"
+          }
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Cron - Outbox Worker": {
+      "main": [
+        [
+          {
+            "node": "GS - Read Outbox",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Read Outbox": {
+      "main": [
+        [
+          {
+            "node": "Code - Filter Pending/Retry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Filter Pending/Retry": {
+      "main": [
+        [
+          {
+            "node": "Split In Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split In Batches": {
+      "main": [
+        [
+          {
+            "node": "Code - Build Send Idem Key",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Split In Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Build Send Idem Key": {
+      "main": [
+        [
+          {
+            "node": "GS - Lookup Idempotency (send)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Lookup Idempotency (send)": {
+      "main": [
+        [
+          {
+            "node": "IF - Already Sent?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Already Sent?": {
+      "main": [
+        [
+          {
+            "node": "GS - Update Outbox DELIVERED",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "GS - Append Idempotency IN_PROGRESS (send)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Append Idempotency IN_PROGRESS (send)": {
+      "main": [
+        [
+          {
+            "node": "Switch - Provider",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch - Provider": {
+      "main": [
+        [
+          {
+            "node": "HTTP - Send WAHA",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [],
+        []
+      ]
+    },
+    "HTTP - Send WAHA": {
+      "main": [
+        [
+          {
+            "node": "Code - Normalize Send Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Normalize Send Result": {
+      "main": [
+        [
+          {
+            "node": "GS - Append Outbound Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Append Outbound Message": {
+      "main": [
+        [
+          {
+            "node": "GS - Update Ticket After Outbound",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Update Ticket After Outbound": {
+      "main": [
+        [
+          {
+            "node": "IF - Send OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Send OK?": {
+      "main": [
+        [
+          {
+            "node": "GS - Update Outbox DELIVERED",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Code - Backoff + Mark RETRY",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Update Outbox DELIVERED": {
+      "main": [
+        [
+          {
+            "node": "GS - Update Idempotency DONE (send)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Backoff + Mark RETRY": {
+      "main": [
+        [
+          {
+            "node": "GS - Update Outbox RETRY",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Update Outbox RETRY": {
+      "main": [
+        [
+          {
+            "node": "GS - Append Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {}
+}
