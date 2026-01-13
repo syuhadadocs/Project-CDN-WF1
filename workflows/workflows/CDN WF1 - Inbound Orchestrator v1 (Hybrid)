@@ -1,5 +1,5 @@
 {
-  "name": "CDN WF1 - Inbound Orchestrator v3 (Hybrid)",
+  "name": "CDN WF1 - Inbound Orchestrator v1 (Hybrid)",
   "active": false,
   "settings": {
     "executionOrder": "v1"
