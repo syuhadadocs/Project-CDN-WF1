@@ -1,0 +1,1317 @@
+{
+  "name": "CDN WF1 - Inbound Orchestrator v3 (Hybrid)",
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "77daa428-83e5-4843-8f4f-8762d354996c",
+  "id": "8583",
+  "tags": [],
+  "nodes": [
+    {
+      "id": "ebd00e27-82ef-415a-b5c0-bc8c14c11511",
+      "name": "Webhook Inbound Unified v3",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        200,
+        200
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "cdn-wf1-unified-v3",
+        "responseMode": "onReceived",
+        "responseCode": 202,
+        "responseData": "={{ { ok: true, accepted: true } }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "45bf4816-d008-4582-afb5-4eac57cbdeec",
+      "name": "Code - Normalize Inbound",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        450,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// Normalize multi-channel inbound payload into internal schema.\n// Expect req body in $json (from Webhook).\nconst body = $json.body ?? $json;\n// --- Provider detection (edit as needed) ---\nlet provider = body.provider || \"WAHA\";\nlet channel  = body.channel  || \"whatsapp\";\n\n// Thread id normalization (prioritize WAHA fields if present)\nconst thread_id = body.thread_id\n  || body.remoteJidAlt\n  || body.remoteJid\n  || body.from\n  || body.chatId\n  || body.email_thread_id\n  || \"\";\n\nconst content = body.content\n  || body.text\n  || body.message\n  || (body.data && body.data.text)\n  || \"\";\n\nconst provider_message_id = body.provider_message_id\n  || (body.key && body.key.id)\n  || body.messageId\n  || body.id\n  || \"\";\n\nconst provider_event_id = body.provider_event_id\n  || body.eventId\n  || body.event_id\n  || \"\";\n\nconst sent_at = body.sent_at\n  || (body.messageTimestamp ? new Date(Number(body.messageTimestamp)*1000).toISOString() : null)\n  || new Date().toISOString();\n\nconst trace_id = body.trace_id || $execution.id || (\"TRC-\" + Date.now());\n\n// Minimal schema output\nreturn [{\n  json: {\n    provider, channel, thread_id,\n    provider_message_id, provider_event_id,\n    sent_at,\n    sender: \"user\",\n    content,\n    raw_json: JSON.stringify(body),\n    trace_id\n  }\n}];\n"
+      }
+    },
+    {
+      "id": "c3757f43-71b0-41c9-8de5-55eae75a1c82",
+      "name": "IF - Schema Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        700,
+        200
+      ],
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json.thread_id}}",
+              "operation": "isNotEmpty"
+            },
+            {
+              "value1": "={{$json.content}}",
+              "operation": "isNotEmpty"
+            },
+            {
+              "value1": "={{$json.provider_message_id}}",
+              "operation": "isNotEmpty"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "337f2723-bdd1-4cb8-9fe2-19079ca744a1",
+      "name": "Code - Build Dedupe Key",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        950,
+        120
+      ],
+      "parameters": {
+        "jsCode": "return [{json:{...$json, dedupe_key:`in|${$json.provider}|${$json.provider_message_id}`}}];"
+      }
+    },
+    {
+      "id": "20130260-82e9-4862-a4f3-420982ff998c",
+      "name": "GS - Lookup Idempotency (dedupe_key)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        1200,
+        120
+      ],
+      "parameters": {
+        "authentication": "oAuth2",
+        "operation": "lookup",
+        "documentId": "={{$env.GSHEET_ID}}",
+        "sheetName": "idempotency_keys",
+        "lookupColumn": "idem_key",
+        "lookupValue": "={{$json.dedupe_key}}",
+        "options": {}
+      }
+    },
+    {
+      "id": "4de846a0-dc99-4d1f-8cef-f8a9af78dfdb",
+      "name": "IF - Already Processed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1450,
+        120
+      ],
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.idem_key !== undefined && ($json.status === 'DONE' || $json.status === 'IN_PROGRESS')}}",
+              "operation": "isTrue"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "e9e68c6d-4fef-43da-a21f-8a67aa518b48",
+      "name": "GS - Upsert Idempotency IN_PROGRESS",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        1700,
+        120
+      ],
+      "parameters": {
+        "authentication": "oAuth2",
+        "operation": "append",
+        "documentId": "={{$env.GSHEET_ID}}",
+        "sheetName": "idempotency_keys",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "idem_key": "={{$json.dedupe_key}}",
+            "scope": "inbound",
+            "ref_type": "message",
+            "ref_id": "",
+            "status": "IN_PROGRESS",
+            "created_at": "={{new Date().toISOString()}}",
+            "expires_at": "={{new Date(Date.now()+2*24*3600*1000).toISOString()}}",
+            "last_seen_at": "={{new Date().toISOString()}}",
+            "result_json": "",
+            "error_message": ""
+          }
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "55491df0-da12-4f79-be5d-73393ead439d",
+      "name": "GS - Lookup Thread Lock",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        1950,
+        120
+      ],
+      "parameters": {
+        "authentication": "oAuth2",
+        "operation": "lookup",
+        "documentId": "={{$env.GSHEET_ID}}",
+        "sheetName": "thread_locks",
+        "lookupColumn": "thread_id",
+        "lookupValue": "={{$json.thread_id}}",
+        "options": {}
+      }
+    },
+    {
+      "id": "50e7f2bf-c109-42fb-89c1-9b0bd7f083ef",
+      "name": "Code - Decide Lock Acquire",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        2200,
+        120
+      ],
+      "parameters": {
+        "jsCode": "const lock = $json; // row from lookup or empty item\nconst now = Date.now();\nconst lockedUntil = lock.locked_until ? Date.parse(lock.locked_until) : 0;\nconst acquire = !lock.thread_id || isNaN(lockedUntil) || lockedUntil < now;\nreturn [{json:{...$json, lock_acquire: acquire, now_iso: new Date().toISOString()}}];\n"
+      }
+    },
+    {
+      "id": "54635f72-52bb-4dce-a24f-8284fe8eb614",
+      "name": "IF - Lock Acquired?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2450,
+        120
+      ],
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.lock_acquire}}",
+              "operation": "isTrue"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "9ca069dc-f0e1-4659-9cb9-136539c5d35a",
+      "name": "GS - Upsert Thread Lock (Acquire)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        2700,
+        60
+      ],
+      "parameters": {
+        "authentication": "oAuth2",
+        "operation": "appendOrUpdate",
+        "documentId": "={{$env.GSHEET_ID}}",
+        "sheetName": "thread_locks",
+        "keyColumn": "thread_id",
+        "keyValue": "={{$json.thread_id}}",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "thread_id": "={{$json.thread_id}}",
+            "active_ticket_id": "={{$json.active_ticket_id || ''}}",
+            "lock_owner": "={{$execution.id}}",
+            "locked_until": "={{new Date(Date.now() + (Number($env.THREAD_LOCK_SECONDS || 30)*1000)).toISOString()}}",
+            "last_inbound_message_id": "={{$json.provider_message_id}}",
+            "last_inbound_at": "={{$json.sent_at}}",
+            "last_ticket_status": "",
+            "last_seen_at": "={{new Date().toISOString()}}",
+            "created_at": "={{$json.created_at || new Date().toISOString()}}",
+            "updated_at": "={{new Date().toISOString()}}",
+            "notes": ""
+          }
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "ee9f1225-e2f9-474b-992b-4a0a18a2e639",
+      "name": "GS - Lookup Customer (default_thread_id)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        2950,
+        60
+      ],
+      "parameters": {
+        "authentication": "oAuth2",
+        "operation": "lookup",
+        "documentId": "={{$env.GSHEET_ID}}",
+        "sheetName": "customers",
+        "lookupColumn": "default_thread_id",
+        "lookupValue": "={{$json.thread_id}}",
+        "options": {}
+      }
+    },
+    {
+      "id": "ea1d4070-2307-41ea-947b-780098a1a698",
+      "name": "Code - Resolve Customer",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        3200,
+        60
+      ],
+      "parameters": {
+        "jsCode": "// Create deterministic-ish customer_id if missing (simple hash).\nfunction djb2(str){ let h=5381; for (let i=0;i<str.length;i++) h=((h<<5)+h)+str.charCodeAt(i); return h>>>0; }\nconst existingId = $json.customer_id;\nconst thread = $json.thread_id || \"\";\nconst suffix = (djb2(thread) % 1000000).toString().padStart(6,'0');\nconst today = new Date().toISOString().slice(0,10).replaceAll('-','');\nconst customer_id = existingId || `CUS${today}${suffix}`;\nreturn [{\n  json: {\n    ...$json,\n    customer_id,\n    updated_at: new Date().toISOString(),\n    last_seen_at: new Date().toISOString(),\n    default_thread_id: thread,\n    default_channel: $json.channel\n  }\n}];\n"
+      }
+    },
+    {
+      "id": "6c2160c4-bce2-4571-83c9-326020dedb13",
+      "name": "GS - Upsert Customer",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        3450,
+        60
+      ],
+      "parameters": {
+        "authentication": "oAuth2",
+        "operation": "appendOrUpdate",
+        "documentId": "={{$env.GSHEET_ID}}",
+        "sheetName": "customers",
+        "keyColumn": "customer_id",
+        "keyValue": "={{$json.customer_id}}",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "customer_id": "={{$json.customer_id}}",
+            "created_at": "={{$json.created_at || new Date().toISOString()}}",
+            "updated_at": "={{$json.updated_at}}",
+            "status": "active",
+            "name": "={{$json.name || ''}}",
+            "phone": "={{$json.phone || ''}}",
+            "email": "={{$json.email || ''}}",
+            "telegram_username": "={{$json.telegram_username || ''}}",
+            "default_channel": "={{$json.default_channel}}",
+            "default_thread_id": "={{$json.default_thread_id}}",
+            "notes": "={{$json.notes || ''}}",
+            "profile_json": "={{$json.profile_json || ''}}",
+            "preferences_json": "={{$json.preferences_json || ''}}",
+            "active_ticket_id": "={{$json.active_ticket_id || ''}}",
+            "last_intent": "={{$json.last_intent || ''}}",
+            "last_seen_at": "={{$json.last_seen_at}}"
+          }
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "9a57d171-2bf6-48c8-8889-e6b0951b0213",
+      "name": "GS - Read Tickets by thread_id",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        3700,
+        60
+      ],
+      "parameters": {
+        "authentication": "oAuth2",
+        "operation": "read",
+        "documentId": "={{$env.GSHEET_ID}}",
+        "sheetName": "tickets",
+        "options": {}
+      }
+    },
+    {
+      "id": "b3cb24bd-819a-425f-b42a-e59050185e08",
+      "name": "Code - Resolve Ticket (reuse/reopen)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        3950,
+        60
+      ],
+      "parameters": {
+        "jsCode": "// NOTE: Google Sheets read returns many rows; filter in code.\nconst all = items.map(i => i.json); // if connected correctly, this node should receive list of tickets rows\nconst thread_id = $json.thread_id;\nconst reuseHours = Number($env.TICKET_REUSE_WINDOW_HOURS || 24);\nconst now = Date.now();\n\nconst related = all.filter(t => t.thread_id === thread_id);\nconst isOpen = (s) => !['closed','resolved','selesai'].includes(String(s||'').toLowerCase());\nlet active = related.filter(t => isOpen(t.status));\nactive.sort((a,b)=> Date.parse(b.updated_at||b.created_at||0) - Date.parse(a.updated_at||a.created_at||0));\n\nlet chosen = active[0];\nif (!chosen && related.length){\n  related.sort((a,b)=> Date.parse(b.updated_at||b.created_at||0) - Date.parse(a.updated_at||a.created_at||0));\n  const last = related[0];\n  const ageH = (now - Date.parse(last.updated_at||last.created_at||now))/3600000;\n  if (ageH <= reuseHours){\n    chosen = {...last, status: 'open', reopened_at: new Date().toISOString()};\n  }\n}\nif (!chosen){\n  const today = new Date().toISOString().slice(0,10).replaceAll('-','');\n  const suffix = String(Math.floor(Math.random()*1e6)).padStart(6,'0');\n  chosen = {\n    ticket_id: `TCK${today}${suffix}`,\n    created_at: new Date().toISOString(),\n    status: 'open',\n    stage: 'chat',\n    priority: 'normal',\n    tags: '',\n    meta_json: ''\n  };\n}\nchosen.updated_at = new Date().toISOString();\nchosen.thread_id = thread_id;\nchosen.channel = $json.channel;\nchosen.customer_ref = $json.customer_id;\nchosen.last_inbound_at = $json.sent_at;\nchosen.last_message_snippet = ($json.content||'').slice(0,200);\nchosen.unread_flag = 'TRUE';\nreturn [{json:{...$json, ticket: chosen, ticket_id: chosen.ticket_id, active_ticket_id: chosen.ticket_id}}];\n"
+      }
+    },
+    {
+      "id": "5571b517-546c-40e5-be70-9350cdc9cfb8",
+      "name": "GS - Upsert Ticket",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        4200,
+        60
+      ],
+      "parameters": {
+        "authentication": "oAuth2",
+        "operation": "appendOrUpdate",
+        "documentId": "={{$env.GSHEET_ID}}",
+        "sheetName": "tickets",
+        "keyColumn": "ticket_id",
+        "keyValue": "={{$json.ticket_id}}",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "ticket_id": "={{$json.ticket.ticket_id}}",
+            "created_at": "={{$json.ticket.created_at || new Date().toISOString()}}",
+            "updated_at": "={{$json.ticket.updated_at}}",
+            "status": "={{$json.ticket.status}}",
+            "priority": "={{$json.ticket.priority || 'normal'}}",
+            "channel": "={{$json.channel}}",
+            "customer_ref": "={{$json.customer_id}}",
+            "thread_id": "={{$json.thread_id}}",
+            "last_inbound_at": "={{$json.ticket.last_inbound_at}}",
+            "last_message_snippet": "={{$json.ticket.last_message_snippet}}",
+            "unread_flag": "TRUE",
+            "tags": "={{$json.ticket.tags || ''}}",
+            "meta_json": "={{$json.ticket.meta_json || ''}}",
+            "conversation_summary": "={{$json.ticket.conversation_summary || ''}}",
+            "facts_json": "={{$json.ticket.facts_json || ''}}",
+            "stage": "={{$json.ticket.stage || 'chat'}}",
+            "handoff_flag": "={{$json.ticket.handoff_flag || 'FALSE'}}",
+            "handoff_reason": "={{$json.ticket.handoff_reason || ''}}",
+            "reopened_at": "={{$json.ticket.reopened_at || ''}}",
+            "closed_at": "={{$json.ticket.closed_at || ''}}",
+            "last_ai_at": "={{$json.ticket.last_ai_at || ''}}"
+          }
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "2f0e2ce4-74b8-4a94-9e99-82fc1164c44d",
+      "name": "GS - Update Customer active_ticket_id",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        4450,
+        60
+      ],
+      "parameters": {
+        "authentication": "oAuth2",
+        "operation": "update",
+        "documentId": "={{$env.GSHEET_ID}}",
+        "sheetName": "customers",
+        "keyColumn": "customer_id",
+        "keyValue": "={{$json.customer_id}}",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "active_ticket_id": "={{$json.active_ticket_id}}",
+            "updated_at": "={{new Date().toISOString()}}"
+          }
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "5c5bb317-b108-452e-bc7a-11ccc806ab6e",
+      "name": "GS - Append Inbound Message",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        4700,
+        60
+      ],
+      "parameters": {
+        "authentication": "oAuth2",
+        "operation": "append",
+        "documentId": "={{$env.GSHEET_ID}}",
+        "sheetName": "messages",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "message_id": "={{'MSG'+new Date().toISOString().slice(0,10).replaceAll('-','')+String(Math.floor(Math.random()*1e6)).padStart(6,'0')}}",
+            "provider_message_id": "={{$json.provider_message_id}}",
+            "ticket_id": "={{$json.ticket_id}}",
+            "thread_id": "={{$json.thread_id}}",
+            "direction": "IN",
+            "channel": "={{$json.channel}}",
+            "sender": "user",
+            "sent_at": "={{$json.sent_at}}",
+            "content": "={{$json.content}}",
+            "raw_json": "={{$json.raw_json}}",
+            "provider": "={{$json.provider}}",
+            "provider_event_id": "={{$json.provider_event_id}}",
+            "dedupe_key": "={{$json.dedupe_key}}",
+            "intent": "",
+            "latency_ms": "",
+            "ai_json": ""
+          }
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "9e31f614-51cd-4338-87d4-1a954940b749",
+      "name": "GS - Read Messages (ticket_id)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        4950,
+        60
+      ],
+      "parameters": {
+        "authentication": "oAuth2",
+        "operation": "read",
+        "documentId": "={{$env.GSHEET_ID}}",
+        "sheetName": "messages",
+        "options": {}
+      }
+    },
+    {
+      "id": "0bd50132-51b6-46b1-ba51-58e332ea1237",
+      "name": "Code - Build Context (filter last N)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        5200,
+        60
+      ],
+      "parameters": {
+        "jsCode": "// Filter messages for this ticket and build last 20 context\nconst all = items.map(i => i.json);\nconst ticket_id = $json.ticket_id;\nconst msg = all.filter(m => m.ticket_id === ticket_id)\n  .sort((a,b)=> Date.parse(a.sent_at||0)-Date.parse(b.sent_at||0))\n  .slice(-20);\nreturn [{json:{...$json, history: msg}}];\n"
+      }
+    },
+    {
+      "id": "032144af-2f30-4b6d-86ce-5bc653540990",
+      "name": "HTTP - RAG Retrieve (Vector DB)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        5450,
+        60
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.VECTOR_URL}}/search",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{'Bearer '+$env.VECTOR_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "jsonBody": "={{ { collection: $env.VECTOR_COLLECTION || 'cdn_kb', query: $json.content, top_k: Number($env.RAG_TOPK||5), filters: { is_active: true } } }}",
+        "options": {
+          "response": {
+            "responseFormat": "json"
+          }
+        }
+      }
+    },
+    {
+      "id": "30ca3114-bc32-49bd-a3d0-be50113faba3",
+      "name": "GS - Lookup Products (dynamic facts)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        5700,
+        60
+      ],
+      "parameters": {
+        "authentication": "oAuth2",
+        "operation": "read",
+        "documentId": "={{$env.GSHEET_ID}}",
+        "sheetName": "products",
+        "options": {}
+      }
+    },
+    {
+      "id": "3c1ca4d5-94f6-4649-90b2-5e32d1a4a819",
+      "name": "Code - Compose Prompt + Guardrails",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        5950,
+        60
+      ],
+      "parameters": {
+        "jsCode": "const rag = $json.body || $json; // depending on http node output mapping\nconst ragSnips = (rag.results || rag.hits || []).slice(0, Number($env.RAG_TOPK||5));\nconst products = items.map(i=>i.json); // if connected properly: this node should receive products list\nconst q = ($json.content||'').toLowerCase();\nconst prodHits = products\n  .filter(p => (p.is_active||'').toString().toLowerCase() !== 'false')\n  .filter(p => [p.sku,p.name,p.keywords].some(v => (v||'').toLowerCase().includes(q.split(' ')[0]||'')))\n  .slice(0,5)\n  .map(p => ({sku:p.sku,name:p.name,price:p.price,stock_qty:p.stock_qty}));\n\nconst system = [\n  \"Kamu adalah CS/Sales chatbot. Bahasa Indonesia. Jawab singkat, natural, sopan.\",\n  \"DILARANG mengarang harga/stok. Jika data tidak ada, tanya klarifikasi atau offer handoff.\",\n  \"Output WAJIB JSON valid, tanpa markdown.\",\n  \"Action whitelist: UPDATE_TICKET, CREATE_ORDER_DRAFT, REQUEST_MORE_INFO, HANDOFF, SEND_REPLY, NO_REPLY.\",\n  \"Action dilarang: MARK_PAID, RESTOCK, CHANGE_PRICE, DELETE_DATA.\"\n].join(\"\\n\");\n\nconst context = {\n  ticket_id: $json.ticket_id,\n  thread_id: $json.thread_id,\n  channel: $json.channel,\n  customer_id: $json.customer_id,\n  history: $json.history || [],\n  rag: ragSnips,\n  products: prodHits\n};\n\nconst schema = {\n  should_reply: true,\n  reply_text: \"\",\n  handoff: { needed: false, to: null, reason: null },\n  intent: \"unknown\",\n  entities: { product_sku: null, qty: null, phone: null },\n  actions: [{ type: \"NONE\" }],\n  ticket_update: { summary: \"\", facts_json: {} }\n};\n\nreturn [{json:{...$json, llm: {system, context, schema}}}];\n"
+      }
+    },
+    {
+      "id": "f5152785-e3c3-4742-891b-efded43a5d2c",
+      "name": "HTTP - LLM Chat (OpenAI compatible)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        6200,
+        60
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.LLM_URL || 'https://api.openai.com/v1/chat/completions'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{'Bearer '+$env.LLM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "jsonBody": "={{ { model: ($env.LLM_MODEL || 'gpt-4o-mini'), temperature: 0.2, messages: [ {role:'system', content:$json.llm.system}, {role:'user', content: JSON.stringify($json.llm.context)} ] } }}",
+        "options": {
+          "response": {
+            "responseFormat": "json"
+          }
+        }
+      }
+    },
+    {
+      "id": "376dab1e-b556-4741-8053-748427f15ea6",
+      "name": "Code - Parse & Validate AI Contract",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        6450,
+        60
+      ],
+      "parameters": {
+        "jsCode": "const resp = $json;\nconst txt = (resp.choices && resp.choices[0] && resp.choices[0].message && resp.choices[0].message.content) ? resp.choices[0].message.content : JSON.stringify(resp);\nfunction extractJson(s){\n  const m = s.match(/\\{[\\s\\S]*\\}/);\n  return m ? m[0] : null;\n}\nlet obj = null;\ntry { obj = JSON.parse(txt); } catch(e){\n  const ex = extractJson(txt);\n  if (ex) obj = JSON.parse(ex);\n}\nif (!obj) obj = {should_reply:false, reply_text:\"\", actions:[{type:\"HANDOFF\", reason:\"AI output invalid\"}], handoff:{required:true, reason:\"AI output invalid\"}};\n\nconst allowed = new Set([\"UPDATE_TICKET\",\"CREATE_ORDER_DRAFT\",\"REQUEST_MORE_INFO\",\"HANDOFF\",\"SEND_REPLY\",\"NO_REPLY\"]);\nobj.actions = Array.isArray(obj.actions) ? obj.actions.filter(a => a && allowed.has(a.type)) : [];\nif (obj.handoff) {\n  if (obj.handoff.required === undefined && obj.handoff.needed !== undefined) {\n    obj.handoff.required = obj.handoff.needed;\n  }\n  if (obj.handoff.needed === undefined && obj.handoff.required !== undefined) {\n    obj.handoff.needed = obj.handoff.required;\n  }\n}\nif (obj.handoff && obj.handoff.required) {\n  // ok\n} else if (obj.actions.some(a=>a.type===\"HANDOFF\")) {\n  obj.handoff = {required:true, needed:true, reason:\"handoff_requested\"};\n} else {\n  obj.handoff = {required:false, needed:false, reason:\"\"};\n}\nreturn [{json:{...$json, ai: obj}}];\n"
+      }
+    },
+    {
+      "id": "da1f783a-3b83-4a99-8418-0e8243ca84e5",
+      "name": "IF - Should Reply?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        6700,
+        60
+      ],
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.ai.should_reply === true}}",
+              "operation": "isTrue"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "0f79b06d-52e0-4e4d-82a6-b7a55f226345",
+      "name": "GS - Append Outbox (PENDING)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        6950,
+        20
+      ],
+      "parameters": {
+        "authentication": "oAuth2",
+        "operation": "append",
+        "documentId": "={{$env.GSHEET_ID}}",
+        "sheetName": "outbox",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "outbox_id": "={{'OBX'+new Date().toISOString().slice(0,10).replaceAll('-','')+String(Math.floor(Math.random()*1e6)).padStart(6,'0')}}",
+            "created_at": "={{new Date().toISOString()}}",
+            "updated_at": "={{new Date().toISOString()}}",
+            "status": "PENDING",
+            "channel": "={{$json.channel}}",
+            "provider": "={{$json.provider}}",
+            "thread_id": "={{$json.thread_id}}",
+            "ticket_id": "={{$json.ticket_id}}",
+            "message_id": "",
+            "idempotency_key": "",
+            "payload_json": "={{JSON.stringify({provider:$json.provider,channel:$json.channel,type:'text',session:$env.WAHA_SESSION,to:$json.thread_id,text:$json.ai.reply_text,meta:{ticket_id:$json.ticket_id,trace_id:$json.trace_id}})}}",
+            "response_json": "",
+            "last_attempt_at": "",
+            "attempt_count": "0",
+            "next_retry_at": "={{new Date().toISOString()}}",
+            "error_message": ""
+          }
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "360e6e27-0be9-4635-9042-624a123ae748",
+      "name": "GS - Release Thread Lock",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        6950,
+        120
+      ],
+      "parameters": {
+        "authentication": "oAuth2",
+        "operation": "update",
+        "documentId": "={{$env.GSHEET_ID}}",
+        "sheetName": "thread_locks",
+        "keyColumn": "thread_id",
+        "keyValue": "={{$json.thread_id}}",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "locked_until": "={{new Date().toISOString()}}",
+            "updated_at": "={{new Date().toISOString()}}"
+          }
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "ae865523-a056-4a73-bd4c-7449a0b4f2f4",
+      "name": "GS - Update Idempotency DONE (inbound)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        7200,
+        120
+      ],
+      "parameters": {
+        "authentication": "oAuth2",
+        "operation": "update",
+        "documentId": "={{$env.GSHEET_ID}}",
+        "sheetName": "idempotency_keys",
+        "keyColumn": "idem_key",
+        "keyValue": "={{$json.dedupe_key}}",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "status": "DONE",
+            "last_seen_at": "={{new Date().toISOString()}}",
+            "result_json": "={{JSON.stringify($json.ai || {})}}",
+            "error_message": ""
+          }
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "6d49319b-d0eb-456c-b68f-e7f568307dc2",
+      "name": "Code - Set AI Flags",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        6600,
+        -80
+      ],
+      "parameters": {
+        "jsCode": "const ai = $json.ai || {};\nconst actions = Array.isArray(ai.actions) ? ai.actions : [];\nconst hasAction = (t) => actions.some(a => a && a.type === t);\nconst handoff = (ai.handoff && (ai.handoff.required || ai.handoff.needed)) || hasAction('HANDOFF');\nconst createOrder = hasAction('CREATE_ORDER_DRAFT');\nreturn [{json:{...$json, ai_flags:{handoff, create_order:createOrder}}}];\n"
+      }
+    },
+    {
+      "id": "38b7af02-fd62-4b22-a297-486c5fb0a317",
+      "name": "IF - Create Order Draft?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        6900,
+        -80
+      ],
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.ai_flags.create_order}}",
+              "operation": "isTrue"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "3299e1f9-3362-4cff-8772-81bf138a7387",
+      "name": "GS - Append Order Draft",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        7150,
+        -140
+      ],
+      "parameters": {
+        "authentication": "oAuth2",
+        "operation": "append",
+        "documentId": "={{$env.GSHEET_ID}}",
+        "sheetName": "orders",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "order_id": "={{$json.order_id}}",
+            "created_at": "={{new Date().toISOString()}}",
+            "updated_at": "={{new Date().toISOString()}}",
+            "status": "draft",
+            "channel": "={{$json.channel}}",
+            "ticket_id": "={{$json.ticket_id}}",
+            "customer_id": "={{$json.customer_id}}",
+            "customer_name": "={{$json.name || ''}}",
+            "customer_contact": "={{$json.phone || $json.email || ''}}",
+            "payment_status": "unpaid",
+            "source_message_id": "={{$json.provider_message_id}}",
+            "idempotency_key": "={{\"order|\"+$json.order_id}}",
+            "meta_json": "={{JSON.stringify($json.ai || {})}}"
+          }
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "07044ba9-8ce9-4ddd-8e0f-88814fdb45aa",
+      "name": "IF - Handoff Needed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        7400,
+        -80
+      ],
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.ai_flags.handoff}}",
+              "operation": "isTrue"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "6998d2ff-0075-4aff-a1aa-fe9f2873b4c1",
+      "name": "GS - Update Ticket Handoff",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        7650,
+        -140
+      ],
+      "parameters": {
+        "authentication": "oAuth2",
+        "operation": "update",
+        "documentId": "={{$env.GSHEET_ID}}",
+        "sheetName": "tickets",
+        "keyColumn": "ticket_id",
+        "keyValue": "={{$json.ticket_id}}",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "handoff_flag": "TRUE",
+            "handoff_reason": "={{($json.ai && $json.ai.handoff && ($json.ai.handoff.reason || $json.ai.handoff.to)) || 'handoff_requested'}}",
+            "updated_at": "={{new Date().toISOString()}}"
+          }
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "540fee9c-d371-45d2-b0a7-23b63ec78697",
+      "name": "Code - Build Order Draft Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        7000,
+        -200
+      ],
+      "parameters": {
+        "jsCode": "const order_id = 'ORD' + new Date().toISOString().slice(0,10).replaceAll('-','') + String(Math.floor(Math.random()*1e6)).padStart(6,'0');\nreturn [{json:{...$json, order_id}}];\n"
+      }
+    },
+    {
+      "id": "34498533-7d63-4f6f-a090-3622f844a4cb",
+      "name": "GS - Append Order Items",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        7350,
+        -200
+      ],
+      "parameters": {
+        "authentication": "oAuth2",
+        "operation": "append",
+        "documentId": "={{$env.GSHEET_ID}}",
+        "sheetName": "order_items",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "order_item_id": "={{'ITM'+new Date().toISOString().slice(0,10).replaceAll('-','')+String(Math.floor(Math.random()*1e6)).padStart(6,'0')}}",
+            "order_id": "={{$json.order_id}}",
+            "product_id": "={{$json.item.product_id || ''}}",
+            "sku": "={{$json.item.sku || ''}}",
+            "product_name": "={{$json.item.name || ''}}",
+            "qty": "={{String($json.item.qty || 1)}}",
+            "unit_price": "={{String($json.item.unit_price || '')}}",
+            "line_total": "={{String($json.item.line_total || '')}}",
+            "created_at": "={{new Date().toISOString()}}",
+            "uom": "={{$json.item.uom || ''}}",
+            "notes": "={{$json.item.notes || ''}}",
+            "meta_json": "={{JSON.stringify($json.item)}}"
+          }
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "2da3777d-5cb6-4365-9ee9-b0be0b072f6e",
+      "name": "Code - Expand Order Items",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        7150,
+        -200
+      ],
+      "parameters": {
+        "jsCode": "const ai = $json.ai || {};\nconst items = Array.isArray(ai.items) ? ai.items : [];\nconst entitySku = ai.entities && ai.entities.product_sku ? ai.entities.product_sku : null;\nconst entityQty = ai.entities && ai.entities.qty ? Number(ai.entities.qty) : null;\nconst fallback = entitySku ? [{sku: entitySku, qty: entityQty || 1}] : [];\nconst all = items.length ? items : fallback;\nreturn all.map(item => ({json:{...$json, item}}));\n"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook Inbound Unified v3": {
+      "main": [
+        [
+          {
+            "node": "Code - Normalize Inbound",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Normalize Inbound": {
+      "main": [
+        [
+          {
+            "node": "IF - Schema Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Schema Valid?": {
+      "main": [
+        [
+          {
+            "node": "Code - Build Dedupe Key",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Code - Build Dedupe Key": {
+      "main": [
+        [
+          {
+            "node": "GS - Lookup Idempotency (dedupe_key)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Lookup Idempotency (dedupe_key)": {
+      "main": [
+        [
+          {
+            "node": "IF - Already Processed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Already Processed?": {
+      "main": [
+        [],
+        [
+          {
+            "node": "GS - Upsert Idempotency IN_PROGRESS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Upsert Idempotency IN_PROGRESS": {
+      "main": [
+        [
+          {
+            "node": "GS - Lookup Thread Lock",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Lookup Thread Lock": {
+      "main": [
+        [
+          {
+            "node": "Code - Decide Lock Acquire",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Decide Lock Acquire": {
+      "main": [
+        [
+          {
+            "node": "IF - Lock Acquired?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Lock Acquired?": {
+      "main": [
+        [
+          {
+            "node": "GS - Upsert Thread Lock (Acquire)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "GS - Upsert Thread Lock (Acquire)": {
+      "main": [
+        [
+          {
+            "node": "GS - Lookup Customer (default_thread_id)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Lookup Customer (default_thread_id)": {
+      "main": [
+        [
+          {
+            "node": "Code - Resolve Customer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Resolve Customer": {
+      "main": [
+        [
+          {
+            "node": "GS - Upsert Customer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Upsert Customer": {
+      "main": [
+        [
+          {
+            "node": "GS - Read Tickets by thread_id",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Read Tickets by thread_id": {
+      "main": [
+        [
+          {
+            "node": "Code - Resolve Ticket (reuse/reopen)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Resolve Ticket (reuse/reopen)": {
+      "main": [
+        [
+          {
+            "node": "GS - Upsert Ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Upsert Ticket": {
+      "main": [
+        [
+          {
+            "node": "GS - Update Customer active_ticket_id",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Update Customer active_ticket_id": {
+      "main": [
+        [
+          {
+            "node": "GS - Append Inbound Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Append Inbound Message": {
+      "main": [
+        [
+          {
+            "node": "GS - Read Messages (ticket_id)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Read Messages (ticket_id)": {
+      "main": [
+        [
+          {
+            "node": "Code - Build Context (filter last N)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Build Context (filter last N)": {
+      "main": [
+        [
+          {
+            "node": "HTTP - RAG Retrieve (Vector DB)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP - RAG Retrieve (Vector DB)": {
+      "main": [
+        [
+          {
+            "node": "GS - Lookup Products (dynamic facts)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Lookup Products (dynamic facts)": {
+      "main": [
+        [
+          {
+            "node": "Code - Compose Prompt + Guardrails",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Compose Prompt + Guardrails": {
+      "main": [
+        [
+          {
+            "node": "HTTP - LLM Chat (OpenAI compatible)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP - LLM Chat (OpenAI compatible)": {
+      "main": [
+        [
+          {
+            "node": "Code - Parse & Validate AI Contract",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Parse & Validate AI Contract": {
+      "main": [
+        [
+          {
+            "node": "Code - Set AI Flags",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Should Reply?": {
+      "main": [
+        [
+          {
+            "node": "GS - Append Outbox (PENDING)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "GS - Release Thread Lock",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Append Outbox (PENDING)": {
+      "main": [
+        [
+          {
+            "node": "GS - Release Thread Lock",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Release Thread Lock": {
+      "main": [
+        [
+          {
+            "node": "GS - Update Idempotency DONE (inbound)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Set AI Flags": {
+      "main": [
+        [
+          {
+            "node": "IF - Create Order Draft?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Create Order Draft?": {
+      "main": [
+        [
+          {
+            "node": "Code - Build Order Draft Payload",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "IF - Handoff Needed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Append Order Draft": {
+      "main": [
+        [
+          {
+            "node": "Code - Expand Order Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Handoff Needed?": {
+      "main": [
+        [
+          {
+            "node": "GS - Update Ticket Handoff",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "IF - Should Reply?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Update Ticket Handoff": {
+      "main": [
+        [
+          {
+            "node": "IF - Should Reply?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Build Order Draft Payload": {
+      "main": [
+        [
+          {
+            "node": "GS - Append Order Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Expand Order Items": {
+      "main": [
+        [
+          {
+            "node": "GS - Append Order Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Append Order Items": {
+      "main": [
+        [
+          {
+            "node": "IF - Handoff Needed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {}
+}
