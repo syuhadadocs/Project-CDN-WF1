@@ -10,7 +10,7 @@
   "nodes": [
     {
       "id": "ebd00e27-82ef-415a-b5c0-bc8c14c11511",
-      "name": "Webhook Inbound Unified v3",
+      "name": "Webhook Inbound Unified v1",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
       "position": [
@@ -881,7 +881,7 @@
     }
   ],
   "connections": {
-    "Webhook Inbound Unified v3": {
+    "Webhook Inbound Unified v1": {
       "main": [
         [
           {
