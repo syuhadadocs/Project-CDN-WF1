@@ -1,53 +1,19 @@
 {
-  "name": "CDN WF1 - Inbound Orchestrator v1 (Hybrid)",
-  "active": false,
-  "settings": {
-    "executionOrder": "v1"
-  },
-  "versionId": "77daa428-83e5-4843-8f4f-8762d354996c",
-  "id": "8583",
-  "tags": [],
   "nodes": [
     {
-      "id": "ebd00e27-82ef-415a-b5c0-bc8c14c11511",
-      "name": "Webhook Inbound Unified v1",
-      "type": "n8n-nodes-base.webhook",
-      "typeVersion": 2,
-      "position": [
-        200,
-        200
-      ],
       "parameters": {
-        "httpMethod": "POST",
-        "path": "cdn-wf1-unified-v3",
-        "responseMode": "onReceived",
-        "responseCode": 202,
-        "responseData": "={{ { ok: true, accepted: true } }}",
-        "options": {}
-      }
-    },
-    {
-      "id": "45bf4816-d008-4582-afb5-4eac57cbdeec",
+        "jsCode": "// Normalize multi-channel inbound payload into internal schema.\n// Expect req body in $json (from Webhook).\nconst body = $json.body ?? $json;\nconst payload = body.payload ?? body.data ?? {};\nconst wahaData = payload._data ?? payload.data ?? {};\nconst key = wahaData.key ?? payload.key ?? body.key ?? {};\n\n// --- Provider detection (edit as needed) ---\nlet provider = body.provider || \"WAHA\";\nlet channel  = body.channel  || \"whatsapp\";\n\n// Thread id normalization (prioritize WAHA fields if present)\nconst thread_id = body.thread_id\n  || key.remoteJidAlt\n  || key.remoteJid\n  || payload.from\n  || body.remoteJidAlt\n  || body.remoteJid\n  || body.from\n  || body.chatId\n  || body.email_thread_id\n  || \"\";\n\n// Content normalization\nconst content = body.content\n  || payload.body\n  || payload.text\n  || (wahaData.message && wahaData.message.conversation)\n  || body.text\n  || body.message\n  || (body.data && body.data.text)\n  || \"\";\n\n// Provider message/event IDs\nconst provider_message_id = body.provider_message_id\n  || (key && key.id)\n  || payload.id\n  || body.messageId\n  || body.id\n  || \"\";\n\nconst provider_event_id = body.provider_event_id\n  || body.eventId\n  || body.event_id\n  || body.id\n  || \"\";\n\n// Timestamp normalization\nconst sent_at = body.sent_at\n  || (payload.timestamp ? new Date(Number(payload.timestamp) * 1000).toISOString() : null)\n  || (body.messageTimestamp ? new Date(Number(body.messageTimestamp) * 1000).toISOString() : null)\n  || new Date().toISOString();\n\nconst trace_id = body.trace_id || $execution.id || (\"TRC-\" + Date.now());\n\n// Minimal schema output\nreturn [{\n  json: {\n    provider, channel, thread_id,\n    provider_message_id, provider_event_id,\n    sent_at,\n    sender: \"user\",\n    content,\n    raw_json: JSON.stringify(body),\n    trace_id\n  }\n}];"
+      },
+      "id": "ed8890ff-eb59-4539-8422-e4c7eb4b9fe0",
       "name": "Code - Normalize Inbound",
       "type": "n8n-nodes-base.code",
       "typeVersion": 1,
       "position": [
-        450,
-        200
-      ],
-      "parameters": {
-        "jsCode": "// Normalize multi-channel inbound payload into internal schema.\n// Expect req body in $json (from Webhook).\nconst body = $json.body ?? $json;\n// --- Provider detection (edit as needed) ---\nlet provider = body.provider || \"WAHA\";\nlet channel  = body.channel  || \"whatsapp\";\n\n// Thread id normalization (prioritize WAHA fields if present)\nconst thread_id = body.thread_id\n  || body.remoteJidAlt\n  || body.remoteJid\n  || body.from\n  || body.chatId\n  || body.email_thread_id\n  || \"\";\n\nconst content = body.content\n  || body.text\n  || body.message\n  || (body.data && body.data.text)\n  || \"\";\n\nconst provider_message_id = body.provider_message_id\n  || (body.key && body.key.id)\n  || body.messageId\n  || body.id\n  || \"\";\n\nconst provider_event_id = body.provider_event_id\n  || body.eventId\n  || body.event_id\n  || \"\";\n\nconst sent_at = body.sent_at\n  || (body.messageTimestamp ? new Date(Number(body.messageTimestamp)*1000).toISOString() : null)\n  || new Date().toISOString();\n\nconst trace_id = body.trace_id || $execution.id || (\"TRC-\" + Date.now());\n\n// Minimal schema output\nreturn [{\n  json: {\n    provider, channel, thread_id,\n    provider_message_id, provider_event_id,\n    sent_at,\n    sender: \"user\",\n    content,\n    raw_json: JSON.stringify(body),\n    trace_id\n  }\n}];\n"
-      }
+        -14384,
+        832
+      ]
     },
     {
-      "id": "c3757f43-71b0-41c9-8de5-55eae75a1c82",
-      "name": "IF - Schema Valid?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2,
-      "position": [
-        700,
-        200
-      ],
       "parameters": {
         "conditions": {
           "string": [
@@ -64,430 +30,1717 @@
               "operation": "isNotEmpty"
             }
           ]
-        }
-      }
+        },
+        "options": {}
+      },
+      "id": "d8b6f98c-43d4-4869-817f-166ba1aa2db1",
+      "name": "IF - Schema Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -14144,
+        832
+      ]
     },
     {
-      "id": "337f2723-bdd1-4cb8-9fe2-19079ca744a1",
+      "parameters": {
+        "jsCode": "return [{json:{...$json, dedupe_key:`in|${$json.provider}|${$json.provider_message_id}`}}];"
+      },
+      "id": "688e9d8f-123c-41cb-84f3-8e2c45fea895",
       "name": "Code - Build Dedupe Key",
       "type": "n8n-nodes-base.code",
       "typeVersion": 1,
       "position": [
-        950,
-        120
-      ],
-      "parameters": {
-        "jsCode": "return [{json:{...$json, dedupe_key:`in|${$json.provider}|${$json.provider_message_id}`}}];"
-      }
+        -13888,
+        752
+      ]
     },
     {
-      "id": "20130260-82e9-4862-a4f3-420982ff998c",
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "=17PTHDWlYUr3J81oJ-rP9ITsUaWV6ULSzTb2iX6_oCsY",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1716984913,
+          "mode": "list",
+          "cachedResultName": "idempotency_keys",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/17PTHDWlYUr3J81oJ-rP9ITsUaWV6ULSzTb2iX6_oCsY/edit#gid=1716984913"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "idem_key",
+              "lookupValue": "={{$json.dedupe_key}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "9083fa4d-7800-401c-95fd-87ae4f199d4b",
       "name": "GS - Lookup Idempotency (dedupe_key)",
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4,
       "position": [
-        1200,
-        120
+        -13648,
+        752
       ],
-      "parameters": {
-        "authentication": "oAuth2",
-        "operation": "lookup",
-        "documentId": "={{$env.GSHEET_ID}}",
-        "sheetName": "idempotency_keys",
-        "lookupColumn": "idem_key",
-        "lookupValue": "={{$json.dedupe_key}}",
-        "options": {}
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "czxwVduaeCAJOXrr",
+          "name": "Test_Google Sheets account"
+        }
       }
     },
     {
-      "id": "4de846a0-dc99-4d1f-8cef-f8a9af78dfdb",
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "ee5f3d6e-9e58-4d20-a086-73c002231ef2",
+              "leftValue": "={{ !!($json.idem_key && ($json.status === 'DONE' || $json.status === 'IN_PROGRESS')) }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "ef4f67a5-3f34-4c8b-8201-961ab661ac65",
       "name": "IF - Already Processed?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        1450,
-        120
-      ],
-      "parameters": {
-        "conditions": {
-          "boolean": [
-            {
-              "value1": "={{$json.idem_key !== undefined && ($json.status === 'DONE' || $json.status === 'IN_PROGRESS')}}",
-              "operation": "isTrue"
-            }
-          ]
-        }
-      }
+        -13392,
+        752
+      ]
     },
     {
-      "id": "e9e68c6d-4fef-43da-a21f-8a67aa518b48",
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "=17PTHDWlYUr3J81oJ-rP9ITsUaWV6ULSzTb2iX6_oCsY"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1716984913,
+          "mode": "list",
+          "cachedResultName": "idempotency_keys",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/17PTHDWlYUr3J81oJ-rP9ITsUaWV6ULSzTb2iX6_oCsY/edit#gid=1716984913"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "idem_key": "={{$node[\"Code - Build Dedupe Key\"].json.dedupe_key}}",
+            "scope": "inbound",
+            "ref_type": "message",
+            "ref_id": "={{$node[\"Code - Build Dedupe Key\"].json.provider_message_id}}",
+            "status": "IN_PROGRESS",
+            "created_at": "={{$now}}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "idem_key",
+              "displayName": "idem_key",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "scope",
+              "displayName": "scope",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ref_type",
+              "displayName": "ref_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ref_id",
+              "displayName": "ref_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "expires_at",
+              "displayName": "expires_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "last_seen_at",
+              "displayName": "last_seen_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "result_json",
+              "displayName": "result_json",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "error_message",
+              "displayName": "error_message",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "850db1ca-c0bb-4401-8586-8dd28a6df0a5",
       "name": "GS - Upsert Idempotency IN_PROGRESS",
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4,
       "position": [
-        1700,
-        120
+        -13136,
+        768
       ],
-      "parameters": {
-        "authentication": "oAuth2",
-        "operation": "append",
-        "documentId": "={{$env.GSHEET_ID}}",
-        "sheetName": "idempotency_keys",
-        "columns": {
-          "mappingMode": "defineBelow",
-          "value": {
-            "idem_key": "={{$json.dedupe_key}}",
-            "scope": "inbound",
-            "ref_type": "message",
-            "ref_id": "",
-            "status": "IN_PROGRESS",
-            "created_at": "={{new Date().toISOString()}}",
-            "expires_at": "={{new Date(Date.now()+2*24*3600*1000).toISOString()}}",
-            "last_seen_at": "={{new Date().toISOString()}}",
-            "result_json": "",
-            "error_message": ""
-          }
-        },
-        "options": {}
-      }
-    },
-    {
-      "id": "55491df0-da12-4f79-be5d-73393ead439d",
-      "name": "GS - Lookup Thread Lock",
-      "type": "n8n-nodes-base.googleSheets",
-      "typeVersion": 4,
-      "position": [
-        1950,
-        120
-      ],
-      "parameters": {
-        "authentication": "oAuth2",
-        "operation": "lookup",
-        "documentId": "={{$env.GSHEET_ID}}",
-        "sheetName": "thread_locks",
-        "lookupColumn": "thread_id",
-        "lookupValue": "={{$json.thread_id}}",
-        "options": {}
-      }
-    },
-    {
-      "id": "50e7f2bf-c109-42fb-89c1-9b0bd7f083ef",
-      "name": "Code - Decide Lock Acquire",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 1,
-      "position": [
-        2200,
-        120
-      ],
-      "parameters": {
-        "jsCode": "const lock = $json; // row from lookup or empty item\nconst now = Date.now();\nconst lockedUntil = lock.locked_until ? Date.parse(lock.locked_until) : 0;\nconst acquire = !lock.thread_id || isNaN(lockedUntil) || lockedUntil < now;\nreturn [{json:{...$json, lock_acquire: acquire, now_iso: new Date().toISOString()}}];\n"
-      }
-    },
-    {
-      "id": "54635f72-52bb-4dce-a24f-8284fe8eb614",
-      "name": "IF - Lock Acquired?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2,
-      "position": [
-        2450,
-        120
-      ],
-      "parameters": {
-        "conditions": {
-          "boolean": [
-            {
-              "value1": "={{$json.lock_acquire}}",
-              "operation": "isTrue"
-            }
-          ]
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "czxwVduaeCAJOXrr",
+          "name": "Test_Google Sheets account"
         }
       }
     },
     {
-      "id": "9ca069dc-f0e1-4659-9cb9-136539c5d35a",
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "=17PTHDWlYUr3J81oJ-rP9ITsUaWV6ULSzTb2iX6_oCsY"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 2014931101,
+          "mode": "list",
+          "cachedResultName": "thread_locks",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/17PTHDWlYUr3J81oJ-rP9ITsUaWV6ULSzTb2iX6_oCsY/edit#gid=2014931101"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "thread_id",
+              "lookupValue": "={{$node[\"Code - Normalize Inbound\"].json.thread_id}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "4884ed62-9437-4c90-9a84-6435a161b25c",
+      "name": "GS - Lookup Thread Lock",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        -12896,
+        768
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "czxwVduaeCAJOXrr",
+          "name": "Test_Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const row = $json || {};\nconst now = Date.now();\n\nconst hasThreadId =\n  typeof row.thread_id === 'string' && row.thread_id.length > 0;\n\nconst lockedUntil = row.locked_until\n  ? Date.parse(row.locked_until)\n  : 0;\n\nconst lockExpired =\n  !lockedUntil || Number.isNaN(lockedUntil) || lockedUntil < now;\n\n// Acquire lock jika:\n// - tidak ada row sama sekali\n// - atau lock sudah expired\nconst acquire = !hasThreadId || lockExpired;\n\nreturn [\n  {\n    json: {\n      ...row,\n      lock_acquire: acquire,\n      now_iso: new Date().toISOString(),\n    },\n  },\n];\n"
+      },
+      "id": "e26dad8e-2a71-49ac-ae04-d5bb6a04616c",
+      "name": "Code - Decide Lock Acquire",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        -12640,
+        768
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "c2cda949-24d5-4031-8240-a650fb328f86",
+              "leftValue": "={{$json.lock_acquire}}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "f1a9f4b0-6d77-48bf-b6f3-bf3c8c0659ae",
+      "name": "IF - Lock Acquired?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -12384,
+        768
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "=17PTHDWlYUr3J81oJ-rP9ITsUaWV6ULSzTb2iX6_oCsY"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 2014931101,
+          "mode": "list",
+          "cachedResultName": "thread_locks",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/17PTHDWlYUr3J81oJ-rP9ITsUaWV6ULSzTb2iX6_oCsY/edit#gid=2014931101"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "thread_id": "={{$node[\"Code - Normalize Inbound\"].json.thread_id}}",
+            "active_ticket_id": "={{$json.active_ticket_id || ''}}",
+            "lock_owner": "={{$execution.id}}",
+            "locked_until": "={{ new Date(Date.now() + ($node[\"Code - Decide Lock Acquire\"].json.lock_ttl_seconds || 30)*1000).toISOString() }}",
+            "last_inbound_message_id": "={{$node[\"Code - Normalize Inbound\"].json.provider_message_id}}",
+            "last_inbound_at": "={{$node[\"Code - Normalize Inbound\"].json.sent_at}}",
+            "last_seen_at": "={{new Date().toISOString()}}",
+            "created_at": "={{$json.created_at || new Date().toISOString()}}",
+            "updated_at": "={{new Date().toISOString()}}",
+            "notes": "={{\"wf1 acquire_lock; exec=\" + $execution.id + \"; idem=\" + $node[\"GS - Upsert Idempotency IN_PROGRESS\"].json.idem_key}}",
+            "last_ticket_status": "LOCKED"
+          },
+          "matchingColumns": [
+            "thread_id"
+          ],
+          "schema": [
+            {
+              "id": "thread_id",
+              "displayName": "thread_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "active_ticket_id",
+              "displayName": "active_ticket_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "lock_owner",
+              "displayName": "lock_owner",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "locked_until",
+              "displayName": "locked_until",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "last_inbound_message_id",
+              "displayName": "last_inbound_message_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "last_inbound_at",
+              "displayName": "last_inbound_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "last_ticket_status",
+              "displayName": "last_ticket_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "last_seen_at",
+              "displayName": "last_seen_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "updated_at",
+              "displayName": "updated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "notes",
+              "displayName": "notes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "363f6d04-6eec-4f12-a65e-9d6cc522a267",
       "name": "GS - Upsert Thread Lock (Acquire)",
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4,
       "position": [
-        2700,
-        60
+        -12144,
+        704
       ],
-      "parameters": {
-        "authentication": "oAuth2",
-        "operation": "appendOrUpdate",
-        "documentId": "={{$env.GSHEET_ID}}",
-        "sheetName": "thread_locks",
-        "keyColumn": "thread_id",
-        "keyValue": "={{$json.thread_id}}",
-        "columns": {
-          "mappingMode": "defineBelow",
-          "value": {
-            "thread_id": "={{$json.thread_id}}",
-            "active_ticket_id": "={{$json.active_ticket_id || ''}}",
-            "lock_owner": "={{$execution.id}}",
-            "locked_until": "={{new Date(Date.now() + (Number($env.THREAD_LOCK_SECONDS || 30)*1000)).toISOString()}}",
-            "last_inbound_message_id": "={{$json.provider_message_id}}",
-            "last_inbound_at": "={{$json.sent_at}}",
-            "last_ticket_status": "",
-            "last_seen_at": "={{new Date().toISOString()}}",
-            "created_at": "={{$json.created_at || new Date().toISOString()}}",
-            "updated_at": "={{new Date().toISOString()}}",
-            "notes": ""
-          }
-        },
-        "options": {}
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "czxwVduaeCAJOXrr",
+          "name": "Test_Google Sheets account"
+        }
       }
     },
     {
-      "id": "ee9f1225-e2f9-474b-992b-4a0a18a2e639",
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "=17PTHDWlYUr3J81oJ-rP9ITsUaWV6ULSzTb2iX6_oCsY",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 407385410,
+          "mode": "list",
+          "cachedResultName": "customers",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/17PTHDWlYUr3J81oJ-rP9ITsUaWV6ULSzTb2iX6_oCsY/edit#gid=407385410"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "default_thread_id",
+              "lookupValue": "={{$node[\"Code - Normalize Inbound\"].json.thread_id}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "46c64e6d-b181-4b1f-9004-0b1af47b6092",
       "name": "GS - Lookup Customer (default_thread_id)",
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4,
       "position": [
-        2950,
-        60
+        -11888,
+        704
       ],
-      "parameters": {
-        "authentication": "oAuth2",
-        "operation": "lookup",
-        "documentId": "={{$env.GSHEET_ID}}",
-        "sheetName": "customers",
-        "lookupColumn": "default_thread_id",
-        "lookupValue": "={{$json.thread_id}}",
-        "options": {}
+      "executeOnce": false,
+      "retryOnFail": false,
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "czxwVduaeCAJOXrr",
+          "name": "Test_Google Sheets account"
+        }
       }
     },
     {
-      "id": "ea1d4070-2307-41ea-947b-780098a1a698",
+      "parameters": {
+        "jsCode": "// Node: Code - Resolve Customer\n// Goal:\n// - If existing customer row found: preserve created_at\n// - If new: generate customer_id + set created_at once\n// - Always set updated_at + last_seen_at to now\n// - Always set default_thread_id + default_channel from inbound normalize\n\nfunction djb2(str) {\n  let h = 5381;\n  for (let i = 0; i < str.length; i++) h = ((h << 5) + h) + str.charCodeAt(i);\n  return h >>> 0;\n}\n\nconst inbound = $node[\"Code - Normalize Inbound\"].json || {};\nconst nowIso = new Date().toISOString();\n\n// In some cases, GS \"Get Row(s)\" returns [{}] when no match.\n// So treat missing customer_id as \"not found\".\nconst existing = $json || {};\nconst hasExistingCustomerId =\n  typeof existing.customer_id === \"string\" && existing.customer_id.trim().length > 0;\n\nconst threadId = (inbound.thread_id || \"\").trim();\nconst channel = (inbound.channel || \"\").trim();\n\nif (!threadId) {\n  throw new Error(\"Resolve Customer: inbound.thread_id is empty\");\n}\nif (!channel) {\n  throw new Error(\"Resolve Customer: inbound.channel is empty\");\n}\n\n// Preserve created_at if existing; otherwise set now.\nconst createdAt =\n  (typeof existing.created_at === \"string\" && existing.created_at.trim())\n    ? existing.created_at\n    : nowIso;\n\n// Preserve customer_id if existing; otherwise generate a new one.\nlet customerId = existing.customer_id;\nif (!hasExistingCustomerId) {\n  const suffix = (djb2(threadId) % 1000000).toString().padStart(6, \"0\");\n  const today = nowIso.slice(0, 10).replaceAll(\"-\", \"\"); // YYYYMMDD\n  customerId = `CUS${today}${suffix}`;\n}\n\n// Build final payload for Upsert Customer (Node 14)\nreturn [\n  {\n    json: {\n      // Keep any existing fields from customer row (if found)\n      ...existing,\n\n      // Keys and canonical defaults\n      customer_id: customerId,\n      default_thread_id: threadId,\n      default_channel: channel,\n\n      // Timestamps\n      created_at: createdAt,   // stable\n      updated_at: nowIso,\n      last_seen_at: nowIso,\n    },\n  },\n];\n"
+      },
+      "id": "e3edec2e-b12e-4188-ae4d-dfde8572f0ea",
       "name": "Code - Resolve Customer",
       "type": "n8n-nodes-base.code",
       "typeVersion": 1,
       "position": [
-        3200,
-        60
-      ],
-      "parameters": {
-        "jsCode": "// Create deterministic-ish customer_id if missing (simple hash).\nfunction djb2(str){ let h=5381; for (let i=0;i<str.length;i++) h=((h<<5)+h)+str.charCodeAt(i); return h>>>0; }\nconst existingId = $json.customer_id;\nconst thread = $json.thread_id || \"\";\nconst suffix = (djb2(thread) % 1000000).toString().padStart(6,'0');\nconst today = new Date().toISOString().slice(0,10).replaceAll('-','');\nconst customer_id = existingId || `CUS${today}${suffix}`;\nreturn [{\n  json: {\n    ...$json,\n    customer_id,\n    updated_at: new Date().toISOString(),\n    last_seen_at: new Date().toISOString(),\n    default_thread_id: thread,\n    default_channel: $json.channel\n  }\n}];\n"
-      }
+        -11648,
+        864
+      ]
     },
     {
-      "id": "6c2160c4-bce2-4571-83c9-326020dedb13",
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "=17PTHDWlYUr3J81oJ-rP9ITsUaWV6ULSzTb2iX6_oCsY"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 407385410,
+          "mode": "list",
+          "cachedResultName": "customers",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/17PTHDWlYUr3J81oJ-rP9ITsUaWV6ULSzTb2iX6_oCsY/edit#gid=407385410"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "customer_id": "={{ $json.customer_id }}",
+            "default_thread_id": "={{ $json.default_thread_id }}",
+            "default_channel": "={{ $json.default_channel }}",
+            "last_seen_at": "={{ $json.last_seen_at }}",
+            "updated_at": "={{ $json.updated_at }}",
+            "status": "ACTIVE",
+            "profile_json": "={{\"\"}}",
+            "preferences_json": "={{\"\"}}",
+            "active_ticket_id": "={{ $('GS - Upsert Thread Lock (Acquire)').item.json.active_ticket_id }}",
+            "created_at": "={{ $json.created_at }}"
+          },
+          "matchingColumns": [
+            "customer_id"
+          ],
+          "schema": [
+            {
+              "id": "customer_id",
+              "displayName": "customer_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "updated_at",
+              "displayName": "updated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "phone",
+              "displayName": "phone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "email",
+              "displayName": "email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "telegram_username",
+              "displayName": "telegram_username",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "default_channel",
+              "displayName": "default_channel",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "default_thread_id",
+              "displayName": "default_thread_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "address_line",
+              "displayName": "address_line",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "kelurahan",
+              "displayName": "kelurahan",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "kecamatan",
+              "displayName": "kecamatan",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "kabupaten",
+              "displayName": "kabupaten",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "provinsi",
+              "displayName": "provinsi",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "country_code",
+              "displayName": "country_code",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "postal_code",
+              "displayName": "postal_code",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "notes",
+              "displayName": "notes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "profile_json",
+              "displayName": "profile_json",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "preferences_json",
+              "displayName": "preferences_json",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "active_ticket_id",
+              "displayName": "active_ticket_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "last_intent",
+              "displayName": "last_intent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "last_seen_at",
+              "displayName": "last_seen_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "3bb25675-cea2-46d7-9219-5b3d62f566da",
       "name": "GS - Upsert Customer",
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4,
       "position": [
-        3450,
-        60
+        -14640,
+        1472
       ],
-      "parameters": {
-        "authentication": "oAuth2",
-        "operation": "appendOrUpdate",
-        "documentId": "={{$env.GSHEET_ID}}",
-        "sheetName": "customers",
-        "keyColumn": "customer_id",
-        "keyValue": "={{$json.customer_id}}",
-        "columns": {
-          "mappingMode": "defineBelow",
-          "value": {
-            "customer_id": "={{$json.customer_id}}",
-            "created_at": "={{$json.created_at || new Date().toISOString()}}",
-            "updated_at": "={{$json.updated_at}}",
-            "status": "active",
-            "name": "={{$json.name || ''}}",
-            "phone": "={{$json.phone || ''}}",
-            "email": "={{$json.email || ''}}",
-            "telegram_username": "={{$json.telegram_username || ''}}",
-            "default_channel": "={{$json.default_channel}}",
-            "default_thread_id": "={{$json.default_thread_id}}",
-            "notes": "={{$json.notes || ''}}",
-            "profile_json": "={{$json.profile_json || ''}}",
-            "preferences_json": "={{$json.preferences_json || ''}}",
-            "active_ticket_id": "={{$json.active_ticket_id || ''}}",
-            "last_intent": "={{$json.last_intent || ''}}",
-            "last_seen_at": "={{$json.last_seen_at}}"
-          }
-        },
-        "options": {}
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "czxwVduaeCAJOXrr",
+          "name": "Test_Google Sheets account"
+        }
       }
     },
     {
-      "id": "9a57d171-2bf6-48c8-8889-e6b0951b0213",
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "=17PTHDWlYUr3J81oJ-rP9ITsUaWV6ULSzTb2iX6_oCsY",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 110569801,
+          "mode": "list",
+          "cachedResultName": "tickets",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/17PTHDWlYUr3J81oJ-rP9ITsUaWV6ULSzTb2iX6_oCsY/edit#gid=110569801"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "thread_id",
+              "lookupValue": "={{$node[\"Code - Normalize Inbound\"].json.thread_id}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "5fa514c9-d9ab-40f1-9377-ba1efbf7ac31",
       "name": "GS - Read Tickets by thread_id",
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4,
       "position": [
-        3700,
-        60
+        -14384,
+        1472
       ],
-      "parameters": {
-        "authentication": "oAuth2",
-        "operation": "read",
-        "documentId": "={{$env.GSHEET_ID}}",
-        "sheetName": "tickets",
-        "options": {}
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "czxwVduaeCAJOXrr",
+          "name": "Test_Google Sheets account"
+        }
       }
     },
     {
-      "id": "b3cb24bd-819a-425f-b42a-e59050185e08",
+      "parameters": {
+        "jsCode": "// Node: Code - Resolve Ticket (reuse/reopen)\n\n// Sources of truth\nconst inbound = $node[\"Code - Normalize Inbound\"].json;\nconst customer = $node[\"GS - Upsert Customer\"].json; // hasil Node 14\n\nconst thread_id = inbound.thread_id;\nconst channel = inbound.channel;\nconst customer_id = customer.customer_id;\n\nif (!thread_id) throw new Error(\"Resolve Ticket: inbound.thread_id missing\");\nif (!channel) throw new Error(\"Resolve Ticket: inbound.channel missing\");\nif (!customer_id) throw new Error(\"Resolve Ticket: customer.customer_id missing\");\n\n// Read ticket rows returned by Node 15 (may be empty item)\nconst rows = $items(\"GS - Read Tickets by thread_id\").map(i => i.json)\n  .filter(r => r && r.ticket_id); // filter out {} empty item\n\nconst now = Date.now();\nconst nowIso = new Date().toISOString();\nconst reuseHours = 24; // configurable later via node param, not $env\n\nconst isOpen = (s) => ![\"closed\",\"resolved\",\"selesai\"].includes(String(s || \"\").toLowerCase());\n\n// Candidates in same thread (rows already filtered by thread_id in Node 15, but keep safe)\nconst related = rows.filter(t => t.thread_id === thread_id);\n\nlet chosen = null;\n\n// 1) Prefer an open ticket\nconst openTickets = related.filter(t => isOpen(t.status));\nopenTickets.sort((a,b) => Date.parse(b.updated_at || b.created_at || 0) - Date.parse(a.updated_at || a.created_at || 0));\nif (openTickets.length) chosen = openTickets[0];\n\n// 2) If none open, consider reopening most recent within reuse window\nif (!chosen && related.length) {\n  related.sort((a,b) => Date.parse(b.updated_at || b.created_at || 0) - Date.parse(a.updated_at || a.created_at || 0));\n  const last = related[0];\n  const lastTs = Date.parse(last.updated_at || last.created_at || nowIso);\n  const ageH = (now - lastTs) / 3600000;\n  if (ageH <= reuseHours) {\n    chosen = { ...last, status: \"open\", reopened_at: nowIso };\n  }\n}\n\n// 3) Else create new ticket\nif (!chosen) {\n  const today = nowIso.slice(0,10).replaceAll(\"-\",\"\");\n  const suffix = String(Math.floor(Math.random() * 1e6)).padStart(6, \"0\");\n  chosen = {\n    ticket_id: `TCK${today}${suffix}`,\n    created_at: nowIso,\n    status: \"open\",\n    stage: \"chat\",\n    priority: \"normal\",\n    tags: \"\",\n    meta_json: \"\",\n  };\n}\n\n// Normalize/overwrite operational fields\nchosen.updated_at = nowIso;\nchosen.thread_id = thread_id;\nchosen.channel = channel;\nchosen.customer_ref = customer_id;\nchosen.last_inbound_at = inbound.sent_at;\nchosen.last_message_snippet = String(inbound.content || \"\").slice(0, 200);\nchosen.unread_flag = \"TRUE\";\n\nreturn [\n  {\n    json: {\n      ...inbound,\n      customer_id,\n      ticket: chosen,\n      ticket_id: chosen.ticket_id,\n      active_ticket_id: chosen.ticket_id,\n    }\n  }\n];"
+      },
+      "id": "1ad9146d-5c7c-450c-bded-594453fd7f51",
       "name": "Code - Resolve Ticket (reuse/reopen)",
       "type": "n8n-nodes-base.code",
       "typeVersion": 1,
       "position": [
-        3950,
-        60
-      ],
-      "parameters": {
-        "jsCode": "// NOTE: Google Sheets read returns many rows; filter in code.\nconst all = items.map(i => i.json); // if connected correctly, this node should receive list of tickets rows\nconst thread_id = $json.thread_id;\nconst reuseHours = Number($env.TICKET_REUSE_WINDOW_HOURS || 24);\nconst now = Date.now();\n\nconst related = all.filter(t => t.thread_id === thread_id);\nconst isOpen = (s) => !['closed','resolved','selesai'].includes(String(s||'').toLowerCase());\nlet active = related.filter(t => isOpen(t.status));\nactive.sort((a,b)=> Date.parse(b.updated_at||b.created_at||0) - Date.parse(a.updated_at||a.created_at||0));\n\nlet chosen = active[0];\nif (!chosen && related.length){\n  related.sort((a,b)=> Date.parse(b.updated_at||b.created_at||0) - Date.parse(a.updated_at||a.created_at||0));\n  const last = related[0];\n  const ageH = (now - Date.parse(last.updated_at||last.created_at||now))/3600000;\n  if (ageH <= reuseHours){\n    chosen = {...last, status: 'open', reopened_at: new Date().toISOString()};\n  }\n}\nif (!chosen){\n  const today = new Date().toISOString().slice(0,10).replaceAll('-','');\n  const suffix = String(Math.floor(Math.random()*1e6)).padStart(6,'0');\n  chosen = {\n    ticket_id: `TCK${today}${suffix}`,\n    created_at: new Date().toISOString(),\n    status: 'open',\n    stage: 'chat',\n    priority: 'normal',\n    tags: '',\n    meta_json: ''\n  };\n}\nchosen.updated_at = new Date().toISOString();\nchosen.thread_id = thread_id;\nchosen.channel = $json.channel;\nchosen.customer_ref = $json.customer_id;\nchosen.last_inbound_at = $json.sent_at;\nchosen.last_message_snippet = ($json.content||'').slice(0,200);\nchosen.unread_flag = 'TRUE';\nreturn [{json:{...$json, ticket: chosen, ticket_id: chosen.ticket_id, active_ticket_id: chosen.ticket_id}}];\n"
-      }
+        -14144,
+        1472
+      ]
     },
     {
-      "id": "5571b517-546c-40e5-be70-9350cdc9cfb8",
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "=17PTHDWlYUr3J81oJ-rP9ITsUaWV6ULSzTb2iX6_oCsY"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 110569801,
+          "mode": "list",
+          "cachedResultName": "tickets",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/17PTHDWlYUr3J81oJ-rP9ITsUaWV6ULSzTb2iX6_oCsY/edit#gid=110569801"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "ticket_id": "={{ $json.ticket.ticket_id }}",
+            "created_at": "={{ $json.ticket.created_at }}",
+            "status": "={{ $json.ticket.status }}",
+            "stage": "={{ $json.ticket.stage }}",
+            "priority": "={{ $json.ticket.priority }}",
+            "updated_at": "={{ $json.ticket.updated_at }}",
+            "channel": "={{ $json.ticket.channel }}",
+            "customer_ref": "={{ $json.ticket.customer_ref }}",
+            "thread_id": "={{ $json.ticket.thread_id }}",
+            "last_inbound_at": "={{ $json.ticket.last_inbound_at }}",
+            "last_message_snippet": "={{ $json.ticket.last_message_snippet }}",
+            "unread_flag": "={{ $json.ticket.unread_flag }}",
+            "dedupe_key": "={{ $('Code - Build Dedupe Key').item.json.dedupe_key }}",
+            "tags": "={{ $json.ticket.tags }}",
+            "meta_json": "={{ $json.ticket.meta_json }}",
+            "requester_name": "={{ $('Code - Normalize Inbound').item.json.sender }}",
+            "requester_contact": "={{ $('Code - Normalize Inbound').item.json.thread_id }}"
+          },
+          "matchingColumns": [
+            "ticket_id"
+          ],
+          "schema": [
+            {
+              "id": "ticket_id",
+              "displayName": "ticket_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "updated_at",
+              "displayName": "updated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "priority",
+              "displayName": "priority",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "channel",
+              "displayName": "channel",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "customer_ref",
+              "displayName": "customer_ref",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "requester_name",
+              "displayName": "requester_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "requester_contact",
+              "displayName": "requester_contact",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "thread_id",
+              "displayName": "thread_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "subject",
+              "displayName": "subject",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "description",
+              "displayName": "description",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "category",
+              "displayName": "category",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "assignee",
+              "displayName": "assignee",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "sla_due_at",
+              "displayName": "sla_due_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "last_inbound_at",
+              "displayName": "last_inbound_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "last_outbound_at",
+              "displayName": "last_outbound_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "last_message_snippet",
+              "displayName": "last_message_snippet",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "unread_flag",
+              "displayName": "unread_flag",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "source_message_id",
+              "displayName": "source_message_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "dedupe_key",
+              "displayName": "dedupe_key",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "tags",
+              "displayName": "tags",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "meta_json",
+              "displayName": "meta_json",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "conversation_summary",
+              "displayName": "conversation_summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "facts_json",
+              "displayName": "facts_json",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "stage",
+              "displayName": "stage",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "handoff_flag",
+              "displayName": "handoff_flag",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "handoff_reason",
+              "displayName": "handoff_reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "reopened_at",
+              "displayName": "reopened_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "closed_at",
+              "displayName": "closed_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "last_ai_at",
+              "displayName": "last_ai_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "cd2f225f-673e-4b6e-afea-87c260a7f850",
       "name": "GS - Upsert Ticket",
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4,
       "position": [
-        4200,
-        60
+        -13888,
+        1472
       ],
-      "parameters": {
-        "authentication": "oAuth2",
-        "operation": "appendOrUpdate",
-        "documentId": "={{$env.GSHEET_ID}}",
-        "sheetName": "tickets",
-        "keyColumn": "ticket_id",
-        "keyValue": "={{$json.ticket_id}}",
-        "columns": {
-          "mappingMode": "defineBelow",
-          "value": {
-            "ticket_id": "={{$json.ticket.ticket_id}}",
-            "created_at": "={{$json.ticket.created_at || new Date().toISOString()}}",
-            "updated_at": "={{$json.ticket.updated_at}}",
-            "status": "={{$json.ticket.status}}",
-            "priority": "={{$json.ticket.priority || 'normal'}}",
-            "channel": "={{$json.channel}}",
-            "customer_ref": "={{$json.customer_id}}",
-            "thread_id": "={{$json.thread_id}}",
-            "last_inbound_at": "={{$json.ticket.last_inbound_at}}",
-            "last_message_snippet": "={{$json.ticket.last_message_snippet}}",
-            "unread_flag": "TRUE",
-            "tags": "={{$json.ticket.tags || ''}}",
-            "meta_json": "={{$json.ticket.meta_json || ''}}",
-            "conversation_summary": "={{$json.ticket.conversation_summary || ''}}",
-            "facts_json": "={{$json.ticket.facts_json || ''}}",
-            "stage": "={{$json.ticket.stage || 'chat'}}",
-            "handoff_flag": "={{$json.ticket.handoff_flag || 'FALSE'}}",
-            "handoff_reason": "={{$json.ticket.handoff_reason || ''}}",
-            "reopened_at": "={{$json.ticket.reopened_at || ''}}",
-            "closed_at": "={{$json.ticket.closed_at || ''}}",
-            "last_ai_at": "={{$json.ticket.last_ai_at || ''}}"
-          }
-        },
-        "options": {}
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "czxwVduaeCAJOXrr",
+          "name": "Test_Google Sheets account"
+        }
       }
     },
     {
-      "id": "2f0e2ce4-74b8-4a94-9e99-82fc1164c44d",
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "=17PTHDWlYUr3J81oJ-rP9ITsUaWV6ULSzTb2iX6_oCsY"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 407385410,
+          "mode": "list",
+          "cachedResultName": "customers",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/17PTHDWlYUr3J81oJ-rP9ITsUaWV6ULSzTb2iX6_oCsY/edit#gid=407385410"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "customer_id": "={{ $('GS - Upsert Customer').item.json.customer_id }}",
+            "updated_at": "={{$now}}",
+            "active_ticket_id": "={{ $json.ticket_id }}",
+            "last_seen_at": "={{$now}}"
+          },
+          "matchingColumns": [
+            "customer_id"
+          ],
+          "schema": [
+            {
+              "id": "customer_id",
+              "displayName": "customer_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "updated_at",
+              "displayName": "updated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "phone",
+              "displayName": "phone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "email",
+              "displayName": "email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "telegram_username",
+              "displayName": "telegram_username",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "default_channel",
+              "displayName": "default_channel",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "default_thread_id",
+              "displayName": "default_thread_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "address_line",
+              "displayName": "address_line",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "kelurahan",
+              "displayName": "kelurahan",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "kecamatan",
+              "displayName": "kecamatan",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "kabupaten",
+              "displayName": "kabupaten",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "provinsi",
+              "displayName": "provinsi",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "country_code",
+              "displayName": "country_code",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "postal_code",
+              "displayName": "postal_code",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "notes",
+              "displayName": "notes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "profile_json",
+              "displayName": "profile_json",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "preferences_json",
+              "displayName": "preferences_json",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "active_ticket_id",
+              "displayName": "active_ticket_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "last_intent",
+              "displayName": "last_intent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "last_seen_at",
+              "displayName": "last_seen_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "40c39ac4-5e71-4aaa-b73a-a23c6922a6ca",
       "name": "GS - Update Customer active_ticket_id",
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4,
       "position": [
-        4450,
-        60
+        -13632,
+        1472
       ],
-      "parameters": {
-        "authentication": "oAuth2",
-        "operation": "update",
-        "documentId": "={{$env.GSHEET_ID}}",
-        "sheetName": "customers",
-        "keyColumn": "customer_id",
-        "keyValue": "={{$json.customer_id}}",
-        "columns": {
-          "mappingMode": "defineBelow",
-          "value": {
-            "active_ticket_id": "={{$json.active_ticket_id}}",
-            "updated_at": "={{new Date().toISOString()}}"
-          }
-        },
-        "options": {}
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "czxwVduaeCAJOXrr",
+          "name": "Test_Google Sheets account"
+        }
       }
     },
     {
-      "id": "5c5bb317-b108-452e-bc7a-11ccc806ab6e",
-      "name": "GS - Append Inbound Message",
-      "type": "n8n-nodes-base.googleSheets",
-      "typeVersion": 4,
-      "position": [
-        4700,
-        60
-      ],
       "parameters": {
-        "authentication": "oAuth2",
         "operation": "append",
-        "documentId": "={{$env.GSHEET_ID}}",
-        "sheetName": "messages",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "=17PTHDWlYUr3J81oJ-rP9ITsUaWV6ULSzTb2iX6_oCsY"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 934477834,
+          "mode": "list",
+          "cachedResultName": "messages",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/17PTHDWlYUr3J81oJ-rP9ITsUaWV6ULSzTb2iX6_oCsY/edit#gid=934477834"
+        },
         "columns": {
           "mappingMode": "defineBelow",
           "value": {
             "message_id": "={{'MSG'+new Date().toISOString().slice(0,10).replaceAll('-','')+String(Math.floor(Math.random()*1e6)).padStart(6,'0')}}",
-            "provider_message_id": "={{$json.provider_message_id}}",
-            "ticket_id": "={{$json.ticket_id}}",
-            "thread_id": "={{$json.thread_id}}",
             "direction": "IN",
-            "channel": "={{$json.channel}}",
-            "sender": "user",
-            "sent_at": "={{$json.sent_at}}",
-            "content": "={{$json.content}}",
-            "raw_json": "={{$json.raw_json}}",
-            "provider": "={{$json.provider}}",
-            "provider_event_id": "={{$json.provider_event_id}}",
-            "dedupe_key": "={{$json.dedupe_key}}",
-            "intent": "",
-            "latency_ms": "",
-            "ai_json": ""
-          }
+            "channel": "={{$node[\"Code - Normalize Inbound\"].json.channel}}",
+            "thread_id": "={{$node[\"Code - Normalize Inbound\"].json.thread_id}}",
+            "ticket_id": "={{$node[\"GS - Upsert Ticket\"].json.ticket_id}}",
+            "sender": "={{$node[\"Code - Normalize Inbound\"].json.sender}}",
+            "sent_at": "={{$node[\"Code - Normalize Inbound\"].json.sent_at}}",
+            "content": "={{$node[\"Code - Normalize Inbound\"].json.content}}",
+            "provider": "={{$node[\"Code - Normalize Inbound\"].json.provider}}",
+            "provider_event_id": "={{$node[\"Code - Normalize Inbound\"].json.provider_event_id}}",
+            "dedupe_key": "={{$node[\"Code - Build Dedupe Key\"].json.dedupe_key}}",
+            "raw_json": "={{$node[\"Code - Normalize Inbound\"].json.raw_json}}",
+            "provider_message_id": "={{$node[\"Code - Normalize Inbound\"].json.provider_message_id}}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "message_id",
+              "displayName": "message_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "provider_message_id",
+              "displayName": "provider_message_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ticket_id",
+              "displayName": "ticket_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "thread_id",
+              "displayName": "thread_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "direction",
+              "displayName": "direction",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "channel",
+              "displayName": "channel",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "sender",
+              "displayName": "sender",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "sent_at",
+              "displayName": "sent_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "content",
+              "displayName": "content",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "raw_json",
+              "displayName": "raw_json",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "provider",
+              "displayName": "provider",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "provider_event_id",
+              "displayName": "provider_event_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "dedupe_key",
+              "displayName": "dedupe_key",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "intent",
+              "displayName": "intent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "latency_ms",
+              "displayName": "latency_ms",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ai_json",
+              "displayName": "ai_json",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
         },
         "options": {}
+      },
+      "id": "0364266d-82f1-4a6d-84bb-c8c27ca6951c",
+      "name": "GS - Append Inbound Message",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        -13392,
+        1472
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "czxwVduaeCAJOXrr",
+          "name": "Test_Google Sheets account"
+        }
       }
     },
     {
-      "id": "9e31f614-51cd-4338-87d4-1a954940b749",
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "=17PTHDWlYUr3J81oJ-rP9ITsUaWV6ULSzTb2iX6_oCsY",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 934477834,
+          "mode": "list",
+          "cachedResultName": "messages",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/17PTHDWlYUr3J81oJ-rP9ITsUaWV6ULSzTb2iX6_oCsY/edit#gid=934477834"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "ticket_id",
+              "lookupValue": "={{$json.ticket_id}}"
+            }
+          ]
+        },
+        "combineFilters": "AND",
+        "options": {}
+      },
+      "id": "eacb3f79-e656-4e0c-82b7-50695942d652",
       "name": "GS - Read Messages (ticket_id)",
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4,
       "position": [
-        4950,
-        60
+        -13136,
+        1472
       ],
-      "parameters": {
-        "authentication": "oAuth2",
-        "operation": "read",
-        "documentId": "={{$env.GSHEET_ID}}",
-        "sheetName": "messages",
-        "options": {}
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "czxwVduaeCAJOXrr",
+          "name": "Test_Google Sheets account"
+        }
       }
     },
     {
-      "id": "0bd50132-51b6-46b1-ba51-58e332ea1237",
+      "parameters": {
+        "jsCode": "// Build conversation context for a single ticket (last N messages)\nconst all = items.map(i => i.json);\n\n// ambil ticket_id secara aman dari data yang memang punya ticket\nconst ticket_id = all.find(m => m.ticket_id)?.ticket_id;\nif (!ticket_id) {\n  throw new Error('ticket_id not found in messages');\n}\n\n// filter & sort\nconst history = all\n  .filter(m => m.ticket_id === ticket_id)\n  .sort((a,b) => new Date(a.sent_at) - new Date(b.sent_at))\n  .slice(-20)\n  .map(m => ({\n    direction: m.direction,\n    content: m.content,\n    sent_at: m.sent_at,\n    channel: m.channel\n  }));\n\n// ambil metadata dari message terakhir\nconst last = history[history.length - 1];\n\nreturn [{\n  json: {\n    ticket_id,\n    thread_id: all.find(m => m.thread_id)?.thread_id,\n    history,\n    last_message: last\n  }\n}];"
+      },
+      "id": "791b9aa3-c6fa-4ef6-8943-0b98fedbebd2",
       "name": "Code - Build Context (filter last N)",
       "type": "n8n-nodes-base.code",
       "typeVersion": 1,
       "position": [
-        5200,
-        60
-      ],
-      "parameters": {
-        "jsCode": "// Filter messages for this ticket and build last 20 context\nconst all = items.map(i => i.json);\nconst ticket_id = $json.ticket_id;\nconst msg = all.filter(m => m.ticket_id === ticket_id)\n  .sort((a,b)=> Date.parse(a.sent_at||0)-Date.parse(b.sent_at||0))\n  .slice(-20);\nreturn [{json:{...$json, history: msg}}];\n"
-      }
+        -12896,
+        1472
+      ]
     },
     {
-      "id": "032144af-2f30-4b6d-86ce-5bc653540990",
-      "name": "HTTP - RAG Retrieve (Vector DB)",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4,
-      "position": [
-        5450,
-        60
-      ],
       "parameters": {
         "method": "POST",
         "url": "={{$env.VECTOR_URL}}/search",
@@ -507,125 +1760,139 @@
           ]
         },
         "sendBody": true,
-        "jsonBody": "={{ { collection: $env.VECTOR_COLLECTION || 'cdn_kb', query: $json.content, top_k: Number($env.RAG_TOPK||5), filters: { is_active: true } } }}",
+        "bodyParameters": {
+          "parameters": [
+            {}
+          ]
+        },
         "options": {
-          "response": {
-            "responseFormat": "json"
-          }
+          "response": {}
         }
-      }
+      },
+      "id": "9f4cf925-3f2f-463d-b485-0a9cf75d7c63",
+      "name": "HTTP - RAG Retrieve (Vector DB)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        -12640,
+        1472
+      ],
+      "disabled": true
     },
     {
-      "id": "30ca3114-bc32-49bd-a3d0-be50113faba3",
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "=17PTHDWlYUr3J81oJ-rP9ITsUaWV6ULSzTb2iX6_oCsY"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1002131195,
+          "mode": "list",
+          "cachedResultName": "products",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/17PTHDWlYUr3J81oJ-rP9ITsUaWV6ULSzTb2iX6_oCsY/edit#gid=1002131195"
+        },
+        "combineFilters": "AND",
+        "options": {
+          "dataLocationOnSheet": {
+            "values": {
+              "rangeDefinition": "detectAutomatically"
+            }
+          }
+        }
+      },
+      "id": "92700ec8-c369-422f-ae36-f5a93a53ed14",
       "name": "GS - Lookup Products (dynamic facts)",
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4,
       "position": [
-        5700,
-        60
+        -12384,
+        1472
       ],
-      "parameters": {
-        "authentication": "oAuth2",
-        "operation": "read",
-        "documentId": "={{$env.GSHEET_ID}}",
-        "sheetName": "products",
-        "options": {}
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "czxwVduaeCAJOXrr",
+          "name": "Test_Google Sheets account"
+        }
       }
     },
     {
-      "id": "3c1ca4d5-94f6-4649-90b2-5e32d1a4a819",
+      "parameters": {
+        "jsCode": "// Setelah Merge: setiap item sudah membawa context (ticket_id/history/last_message)\n// dan item juga membawa fields produk (sku/name/price/...).\n// Kita akan kumpulkan products dari items, dan context dari item pertama.\n\nconst first = items[0]?.json || {};\nif (!first.ticket_id) throw new Error(\"Missing ticket_id in merged payload\");\n\n// products list dari items (ambil field produk saja)\nconst products = items.map(i => i.json).map(p => ({\n  product_id: p.product_id,\n  sku: p.sku,\n  name: p.name,\n  price: p.price,\n  stock_qty: p.stock_qty,\n  uom: p.uom,\n  category: p.category,\n  brand: p.brand,\n  keywords: p.keywords,\n  is_active: p.is_active,\n}));\n\n// user message\nconst userText = (first.last_message?.content || \"\").trim();\nconst q = userText.toLowerCase();\nconst tokens = q.split(/\\s+/).filter(Boolean).slice(0, 5);\n\nconst isActive = (p) => {\n  const v = p.is_active;\n  if (typeof v === \"boolean\") return v === true;\n  return (v ?? \"\").toString().toLowerCase() === \"true\";\n};\n\nconst prodHits = products\n  .filter(isActive)\n  .filter(p => {\n    const hay = [p.sku, p.name, p.keywords, p.category, p.brand]\n      .map(v => (v ?? \"\").toString().toLowerCase())\n      .join(\" \");\n    // match jika ada minimal 1 token yang muncul\n    return tokens.length ? tokens.some(t => hay.includes(t)) : false;\n  })\n  .slice(0, 5)\n  .map(p => ({\n    sku: p.sku,\n    name: p.name,\n    price: p.price,\n    stock_qty: p.stock_qty\n  }));\n\nconst ragSnips = []; // RAG diskip\n\nconst system = [\n  \"Kamu adalah CS/Sales chatbot. Bahasa Indonesia. Jawab singkat, natural, sopan.\",\n  \"DILARANG mengarang harga/stok. Gunakan hanya data di 'products' atau informasi yang diberikan user.\",\n  \"Jika produk tidak jelas / data tidak ada, lakukan REQUEST_MORE_INFO atau HANDOFF.\",\n  \"Output WAJIB JSON valid, tanpa markdown.\",\n  \"Action whitelist: UPDATE_TICKET, CREATE_ORDER_DRAFT, REQUEST_MORE_INFO, HANDOFF, SEND_REPLY, NO_REPLY.\",\n  \"Action dilarang: MARK_PAID, RESTOCK, CHANGE_PRICE, DELETE_DATA.\"\n].join(\"\\n\");\n\nconst context = {\n  ticket_id: first.ticket_id,\n  thread_id: first.thread_id,\n  channel: first.channel || \"whatsapp\",\n  customer_id: first.customer_id || null,\n  history: first.history || [],\n  rag: ragSnips,\n  products: prodHits,\n  user_message: userText\n};\n\nconst schema = {\n  should_reply: true,\n  reply_text: \"\",\n  handoff: { needed: false, to: null, reason: null },\n  intent: \"unknown\",\n  entities: { product_sku: null, qty: null, phone: null },\n  actions: [],\n  ticket_update: { summary: \"\", facts_json: {} }\n};\n\n// ✅ Tambahan penting: prompt_text agar HTTP node tidak perlu JS concat/JSON.stringify\nconst prompt_text =\n  \"SYSTEM:\\n\" + system +\n  \"\\n\\nCONTEXT(JSON):\\n\" + JSON.stringify(context) +\n  \"\\n\\nINSTRUCTION:\\nKeluarkan output sesuai schema berikut dan WAJIB JSON valid tanpa markdown:\\n\" +\n  JSON.stringify(schema);\n\nreturn [{\n  json: {\n    ...first,\n    llm: { system, context, schema, prompt_text }\n  }\n}];\n"
+      },
+      "id": "dc8a268d-a1a4-4777-a0ad-87096dfd7c46",
       "name": "Code - Compose Prompt + Guardrails",
       "type": "n8n-nodes-base.code",
       "typeVersion": 1,
       "position": [
-        5950,
-        60
-      ],
-      "parameters": {
-        "jsCode": "const rag = $json.body || $json; // depending on http node output mapping\nconst ragSnips = (rag.results || rag.hits || []).slice(0, Number($env.RAG_TOPK||5));\nconst products = items.map(i=>i.json); // if connected properly: this node should receive products list\nconst q = ($json.content||'').toLowerCase();\nconst prodHits = products\n  .filter(p => (p.is_active||'').toString().toLowerCase() !== 'false')\n  .filter(p => [p.sku,p.name,p.keywords].some(v => (v||'').toLowerCase().includes(q.split(' ')[0]||'')))\n  .slice(0,5)\n  .map(p => ({sku:p.sku,name:p.name,price:p.price,stock_qty:p.stock_qty}));\n\nconst system = [\n  \"Kamu adalah CS/Sales chatbot. Bahasa Indonesia. Jawab singkat, natural, sopan.\",\n  \"DILARANG mengarang harga/stok. Jika data tidak ada, tanya klarifikasi atau offer handoff.\",\n  \"Output WAJIB JSON valid, tanpa markdown.\",\n  \"Action whitelist: UPDATE_TICKET, CREATE_ORDER_DRAFT, REQUEST_MORE_INFO, HANDOFF, SEND_REPLY, NO_REPLY.\",\n  \"Action dilarang: MARK_PAID, RESTOCK, CHANGE_PRICE, DELETE_DATA.\"\n].join(\"\\n\");\n\nconst context = {\n  ticket_id: $json.ticket_id,\n  thread_id: $json.thread_id,\n  channel: $json.channel,\n  customer_id: $json.customer_id,\n  history: $json.history || [],\n  rag: ragSnips,\n  products: prodHits\n};\n\nconst schema = {\n  should_reply: true,\n  reply_text: \"\",\n  handoff: { needed: false, to: null, reason: null },\n  intent: \"unknown\",\n  entities: { product_sku: null, qty: null, phone: null },\n  actions: [{ type: \"NONE\" }],\n  ticket_update: { summary: \"\", facts_json: {} }\n};\n\nreturn [{json:{...$json, llm: {system, context, schema}}}];\n"
-      }
+        -12144,
+        1472
+      ]
     },
     {
-      "id": "f5152785-e3c3-4742-891b-efded43a5d2c",
-      "name": "HTTP - LLM Chat (OpenAI compatible)",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4,
-      "position": [
-        6200,
-        60
-      ],
       "parameters": {
-        "method": "POST",
-        "url": "={{$env.LLM_URL || 'https://api.openai.com/v1/chat/completions'}}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Authorization",
-              "value": "={{'Bearer '+$env.LLM_API_KEY}}"
-            },
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            }
-          ]
-        },
-        "sendBody": true,
-        "jsonBody": "={{ { model: ($env.LLM_MODEL || 'gpt-4o-mini'), temperature: 0.2, messages: [ {role:'system', content:$json.llm.system}, {role:'user', content: JSON.stringify($json.llm.context)} ] } }}",
-        "options": {
-          "response": {
-            "responseFormat": "json"
-          }
-        }
-      }
-    },
-    {
-      "id": "376dab1e-b556-4741-8053-748427f15ea6",
+        "jsCode": "const resp = $json;\n\n// 1) Ambil text output dari Gemini (primary) atau OpenAI (fallback)\nlet txt = \"\";\n\n// Gemini: candidates[0].content.parts[0].text\nif (resp?.candidates?.[0]?.content?.parts?.length) {\n  txt = resp.candidates[0].content.parts\n    .map(p => (p && p.text) ? p.text : \"\")\n    .join(\"\\n\")\n    .trim();\n}\n\n// OpenAI fallback: choices[0].message.content\nif (!txt && resp?.choices?.[0]?.message?.content) {\n  txt = resp.choices[0].message.content;\n}\n\n// If still empty, stringify entire response\nif (!txt) txt = JSON.stringify(resp);\n\n// 2) Extract JSON helper\nfunction extractJson(s) {\n  const m = s.match(/\\{[\\s\\S]*\\}/);\n  return m ? m[0] : null;\n}\n\nlet obj = null;\n\n// 3) Parse JSON (direct, then extracted)\ntry {\n  obj = JSON.parse(txt);\n} catch (e) {\n  const ex = extractJson(txt);\n  if (ex) {\n    try { obj = JSON.parse(ex); } catch (_) {}\n  }\n}\n\n// 4) Hard fallback if invalid\nif (!obj) {\n  obj = {\n    should_reply: false,\n    reply_text: \"\",\n    actions: [{ type: \"HANDOFF\", reason: \"AI output invalid\" }],\n    handoff: { required: true, needed: true, reason: \"AI output invalid\", to: null },\n    intent: \"unknown\",\n    entities: {}\n  };\n}\n\n// 5) Allowlist actions\nconst allowed = new Set([\n  \"UPDATE_TICKET\",\n  \"CREATE_ORDER_DRAFT\",\n  \"REQUEST_MORE_INFO\",\n  \"HANDOFF\",\n  \"SEND_REPLY\",\n  \"NO_REPLY\"\n]);\n\nobj.actions = Array.isArray(obj.actions)\n  ? obj.actions.filter(a => a && allowed.has(a.type))\n  : [];\n\n// 6) Normalize handoff field naming (required vs needed)\nif (obj.handoff) {\n  if (obj.handoff.required === undefined && obj.handoff.needed !== undefined) {\n    obj.handoff.required = obj.handoff.needed;\n  }\n  if (obj.handoff.needed === undefined && obj.handoff.required !== undefined) {\n    obj.handoff.needed = obj.handoff.required;\n  }\n}\n\n// 7) Ensure handoff object exists and is consistent with actions\nif (obj.handoff && (obj.handoff.required || obj.handoff.needed)) {\n  obj.handoff.required = true;\n  obj.handoff.needed = true;\n  obj.handoff.reason = obj.handoff.reason || \"handoff_requested\";\n  if (obj.handoff.to === undefined) obj.handoff.to = null;\n} else if (obj.actions.some(a => a.type === \"HANDOFF\")) {\n  obj.handoff = { required: true, needed: true, reason: \"handoff_requested\", to: null };\n} else {\n  obj.handoff = { required: false, needed: false, reason: \"\", to: null };\n}\n\n// 8) Defaults for missing top-level fields\nif (obj.should_reply === undefined) obj.should_reply = true;\nif (obj.reply_text === undefined) obj.reply_text = \"\";\nif (obj.intent === undefined) obj.intent = \"unknown\";\nif (obj.entities === undefined) obj.entities = {};\n\n// Return: keep original response + parsed contract + raw text for debugging\nreturn [{\n  json: {\n    ...$json,\n    ai_raw_text: txt,\n    ai: obj\n  }\n}];\n"
+      },
+      "id": "cc141184-dbfd-4510-a18b-37aafd852b7a",
       "name": "Code - Parse & Validate AI Contract",
       "type": "n8n-nodes-base.code",
       "typeVersion": 1,
       "position": [
-        6450,
-        60
-      ],
-      "parameters": {
-        "jsCode": "const resp = $json;\nconst txt = (resp.choices && resp.choices[0] && resp.choices[0].message && resp.choices[0].message.content) ? resp.choices[0].message.content : JSON.stringify(resp);\nfunction extractJson(s){\n  const m = s.match(/\\{[\\s\\S]*\\}/);\n  return m ? m[0] : null;\n}\nlet obj = null;\ntry { obj = JSON.parse(txt); } catch(e){\n  const ex = extractJson(txt);\n  if (ex) obj = JSON.parse(ex);\n}\nif (!obj) obj = {should_reply:false, reply_text:\"\", actions:[{type:\"HANDOFF\", reason:\"AI output invalid\"}], handoff:{required:true, reason:\"AI output invalid\"}};\n\nconst allowed = new Set([\"UPDATE_TICKET\",\"CREATE_ORDER_DRAFT\",\"REQUEST_MORE_INFO\",\"HANDOFF\",\"SEND_REPLY\",\"NO_REPLY\"]);\nobj.actions = Array.isArray(obj.actions) ? obj.actions.filter(a => a && allowed.has(a.type)) : [];\nif (obj.handoff) {\n  if (obj.handoff.required === undefined && obj.handoff.needed !== undefined) {\n    obj.handoff.required = obj.handoff.needed;\n  }\n  if (obj.handoff.needed === undefined && obj.handoff.required !== undefined) {\n    obj.handoff.needed = obj.handoff.required;\n  }\n}\nif (obj.handoff && obj.handoff.required) {\n  // ok\n} else if (obj.actions.some(a=>a.type===\"HANDOFF\")) {\n  obj.handoff = {required:true, needed:true, reason:\"handoff_requested\"};\n} else {\n  obj.handoff = {required:false, needed:false, reason:\"\"};\n}\nreturn [{json:{...$json, ai: obj}}];\n"
-      }
+        -11632,
+        1472
+      ]
     },
     {
-      "id": "da1f783a-3b83-4a99-8418-0e8243ca84e5",
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "5093dc6e-542c-45be-818d-8c6ac2b71d7c",
+              "leftValue": "={{$json.ai_flags.should_reply}}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "1d88ab01-6064-467f-8896-e4933d1ee34f",
       "name": "IF - Should Reply?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        6700,
-        60
-      ],
-      "parameters": {
-        "conditions": {
-          "boolean": [
-            {
-              "value1": "={{$json.ai.should_reply === true}}",
-              "operation": "isTrue"
-            }
-          ]
-        }
-      }
+        -12624,
+        1872
+      ]
     },
     {
-      "id": "0f79b06d-52e0-4e4d-82a6-b7a55f226345",
-      "name": "GS - Append Outbox (PENDING)",
-      "type": "n8n-nodes-base.googleSheets",
-      "typeVersion": 4,
-      "position": [
-        6950,
-        20
-      ],
       "parameters": {
-        "authentication": "oAuth2",
         "operation": "append",
-        "documentId": "={{$env.GSHEET_ID}}",
-        "sheetName": "outbox",
+        "documentId": {
+          "__rl": true,
+          "value": "=17PTHDWlYUr3J81oJ-rP9ITsUaWV6ULSzTb2iX6_oCsY",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 501423829,
+          "mode": "list",
+          "cachedResultName": "outbox",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/17PTHDWlYUr3J81oJ-rP9ITsUaWV6ULSzTb2iX6_oCsY/edit#gid=501423829"
+        },
         "columns": {
           "mappingMode": "defineBelow",
           "value": {
@@ -633,265 +1900,1475 @@
             "created_at": "={{new Date().toISOString()}}",
             "updated_at": "={{new Date().toISOString()}}",
             "status": "PENDING",
-            "channel": "={{$json.channel}}",
-            "provider": "={{$json.provider}}",
-            "thread_id": "={{$json.thread_id}}",
-            "ticket_id": "={{$json.ticket_id}}",
-            "message_id": "",
-            "idempotency_key": "",
-            "payload_json": "={{JSON.stringify({provider:$json.provider,channel:$json.channel,type:'text',session:$env.WAHA_SESSION,to:$json.thread_id,text:$json.ai.reply_text,meta:{ticket_id:$json.ticket_id,trace_id:$json.trace_id}})}}",
-            "response_json": "",
-            "last_attempt_at": "",
+            "channel": "={{$node[\"Code - Build Context (filter last N)\"].json.channel || \"whatsapp\"}}",
+            "provider": "=WAHA",
+            "thread_id": "={{$node[\"Code - Build Context (filter last N)\"].json.thread_id}}",
+            "ticket_id": "={{$node[\"Code - Build Context (filter last N)\"].json.ticket_id}}",
+            "payload_json": "={{\nJSON.stringify({\n  provider: \"WAHA\",\n  session: \"default\",\n  type: \"text\",\n  thread_id: $node[\"Code - Build Context (filter last N)\"].json.thread_id,\n  ticket_id: $node[\"Code - Build Context (filter last N)\"].json.ticket_id,\n  text: $node[\"Code - Parse & Validate AI Contract\"].json.ai.reply_text\n})\n}}",
             "attempt_count": "0",
             "next_retry_at": "={{new Date().toISOString()}}",
-            "error_message": ""
-          }
+            "idempotency_key": "OUT"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "outbox_id",
+              "displayName": "outbox_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "updated_at",
+              "displayName": "updated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "channel",
+              "displayName": "channel",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "provider",
+              "displayName": "provider",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "thread_id",
+              "displayName": "thread_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ticket_id",
+              "displayName": "ticket_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "message_id",
+              "displayName": "message_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "idempotency_key",
+              "displayName": "idempotency_key",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "payload_json",
+              "displayName": "payload_json",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "response_json",
+              "displayName": "response_json",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "last_attempt_at",
+              "displayName": "last_attempt_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "attempt_count",
+              "displayName": "attempt_count",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "next_retry_at",
+              "displayName": "next_retry_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "error_message",
+              "displayName": "error_message",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
         },
         "options": {}
+      },
+      "id": "f60bf974-8926-4512-95b5-60248c972a10",
+      "name": "GS - Append Outbox (PENDING)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        -12368,
+        1712
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "czxwVduaeCAJOXrr",
+          "name": "Test_Google Sheets account"
+        }
       }
     },
     {
-      "id": "360e6e27-0be9-4635-9042-624a123ae748",
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "=17PTHDWlYUr3J81oJ-rP9ITsUaWV6ULSzTb2iX6_oCsY",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 2014931101,
+          "mode": "list",
+          "cachedResultName": "thread_locks",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/17PTHDWlYUr3J81oJ-rP9ITsUaWV6ULSzTb2iX6_oCsY/edit#gid=2014931101"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "updated_at": "={{$now}}",
+            "thread_id": "={{$node[\"Code - Build Context (filter last N)\"].json.thread_id}}",
+            "locked_until": "={{ new Date(0).toISOString() }}"
+          },
+          "matchingColumns": [
+            "thread_id"
+          ],
+          "schema": [
+            {
+              "id": "thread_id",
+              "displayName": "thread_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "active_ticket_id",
+              "displayName": "active_ticket_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "lock_owner",
+              "displayName": "lock_owner",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "locked_until",
+              "displayName": "locked_until",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "last_inbound_message_id",
+              "displayName": "last_inbound_message_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "last_inbound_at",
+              "displayName": "last_inbound_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "last_ticket_status",
+              "displayName": "last_ticket_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "last_seen_at",
+              "displayName": "last_seen_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "updated_at",
+              "displayName": "updated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "notes",
+              "displayName": "notes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "9a91aa78-1934-4cec-be2d-3ed1e8f6926b",
       "name": "GS - Release Thread Lock",
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4,
       "position": [
-        6950,
-        120
+        -12128,
+        1888
       ],
-      "parameters": {
-        "authentication": "oAuth2",
-        "operation": "update",
-        "documentId": "={{$env.GSHEET_ID}}",
-        "sheetName": "thread_locks",
-        "keyColumn": "thread_id",
-        "keyValue": "={{$json.thread_id}}",
-        "columns": {
-          "mappingMode": "defineBelow",
-          "value": {
-            "locked_until": "={{new Date().toISOString()}}",
-            "updated_at": "={{new Date().toISOString()}}"
-          }
-        },
-        "options": {}
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "czxwVduaeCAJOXrr",
+          "name": "Test_Google Sheets account"
+        }
       }
     },
     {
-      "id": "ae865523-a056-4a73-bd4c-7449a0b4f2f4",
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "=17PTHDWlYUr3J81oJ-rP9ITsUaWV6ULSzTb2iX6_oCsY"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1716984913,
+          "mode": "list",
+          "cachedResultName": "idempotency_keys",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/17PTHDWlYUr3J81oJ-rP9ITsUaWV6ULSzTb2iX6_oCsY/edit#gid=1716984913"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "idem_key": "={{$node[\"GS - Append Inbound Message\"].json.dedupe_key}}",
+            "status": "DONE",
+            "last_seen_at": "={{$now}}",
+            "result_json": "={{\nJSON.stringify({\n  ai: $node[\"Code - Parse & Validate AI Contract\"].json.ai,\n  outbox_id: $node[\"GS - Append Outbox (PENDING)\"].json.outbox_id || null,\n  should_reply: $node[\"Code - Set AI Flags1\"].json.ai_flags?.should_reply ?? null\n})\n}}"
+          },
+          "matchingColumns": [
+            "idem_key"
+          ],
+          "schema": [
+            {
+              "id": "idem_key",
+              "displayName": "idem_key",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "scope",
+              "displayName": "scope",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ref_type",
+              "displayName": "ref_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ref_id",
+              "displayName": "ref_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "expires_at",
+              "displayName": "expires_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "last_seen_at",
+              "displayName": "last_seen_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "result_json",
+              "displayName": "result_json",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "error_message",
+              "displayName": "error_message",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "619ff1d2-8117-4ca6-816b-098d4c563c0f",
       "name": "GS - Update Idempotency DONE (inbound)",
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4,
       "position": [
-        7200,
-        120
+        -11872,
+        1888
       ],
-      "parameters": {
-        "authentication": "oAuth2",
-        "operation": "update",
-        "documentId": "={{$env.GSHEET_ID}}",
-        "sheetName": "idempotency_keys",
-        "keyColumn": "idem_key",
-        "keyValue": "={{$json.dedupe_key}}",
-        "columns": {
-          "mappingMode": "defineBelow",
-          "value": {
-            "status": "DONE",
-            "last_seen_at": "={{new Date().toISOString()}}",
-            "result_json": "={{JSON.stringify($json.ai || {})}}",
-            "error_message": ""
-          }
-        },
-        "options": {}
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "czxwVduaeCAJOXrr",
+          "name": "Test_Google Sheets account"
+        }
       }
     },
     {
-      "id": "6d49319b-d0eb-456c-b68f-e7f568307dc2",
-      "name": "Code - Set AI Flags",
+      "parameters": {
+        "jsCode": "// Build Order Draft + Items from AI contract (robust)\n// Requires: $node[\"Code - Parse & Validate AI Contract\"].json.ai\n// Requires: products list available in previous context (optional)\n\nconst nowIso = new Date().toISOString();\n\n// --- helpers ---\nconst genId = (prefix) => {\n  const d = new Date();\n  const y = d.getUTCFullYear();\n  const m = String(d.getUTCMonth()+1).padStart(2,'0');\n  const day = String(d.getUTCDate()).padStart(2,'0');\n  const rand = Math.random().toString(16).slice(2, 8).toUpperCase();\n  return `${prefix}${y}${m}${day}${rand}`;\n};\n\nconst safeNum = (v, def=0) => {\n  const n = Number(v);\n  return Number.isFinite(n) ? n : def;\n};\n\n// --- source nodes (adjust names if yours differ) ---\nconst ctxNode = $node[\"Code - Build Context (filter last N)\"].json;\nconst aiNode = $node[\"Code - Parse & Validate AI Contract\"].json;\n\nconst ai = aiNode.ai || {};\nconst actions = Array.isArray(ai.actions) ? ai.actions : [];\nconst createAction = actions.find(a => a && a.type === \"CREATE_ORDER_DRAFT\") || null;\n\n// Products list: prefer llm.context.products if you have it; else empty\nconst llmCtx = $node[\"Code - Compose Prompt + Guardrails\"].json?.llm?.context || {};\nconst prodCandidates = Array.isArray(llmCtx.products) ? llmCtx.products : [];\n\n// Build item requests from AI:\n// priority:\n// 1) action.items (array) if provided\n// 2) ai.entities (single sku/qty)\nlet reqItems = [];\n\nif (createAction && Array.isArray(createAction.items) && createAction.items.length) {\n  reqItems = createAction.items.map(it => ({\n    sku: it.sku || it.product_sku || null,\n    qty: it.qty || it.quantity || 1,\n  }));\n} else {\n  const sku = ai.entities?.product_sku || null;\n  const qty = ai.entities?.qty || 1;\n  if (sku) reqItems = [{ sku, qty }];\n}\n\n// Resolve item details using prodCandidates (sku match)\nconst resolvedItems = reqItems\n  .filter(it => it && it.sku)\n  .map(it => {\n    const hit = prodCandidates.find(p => (p.sku||\"\").toString() === it.sku.toString()) || {};\n    const unit_price = safeNum(hit.price, null);\n    const stock_qty = safeNum(hit.stock_qty, null);\n    return {\n      product_id: hit.product_id || null,\n      sku: it.sku,\n      product_name: hit.name || hit.product_name || \"\",\n      uom: hit.uom || null,\n      qty: safeNum(it.qty, 1),\n      unit_price,\n      stock_qty,\n      line_total: unit_price === null ? null : safeNum(it.qty,1) * unit_price,\n      meta_json: JSON.stringify({ resolved_from: \"llm.context.products\", raw: hit }),\n    };\n  });\n\n// If we cannot resolve pricing, still create draft but mark needs_review\nconst needsReview = resolvedItems.some(x => x.unit_price === null || x.product_name === \"\");\n\n// Totals\nconst total_amount = resolvedItems.reduce((acc, it) => acc + (safeNum(it.line_total, 0)), 0);\n\n// IDs\nconst order_id = genId(\"ORD\");\nconst idempotency_key =\n  `order|${ctxNode.ticket_id}|${$node[\"GS - Append Inbound Message\"].json.dedupe_key}`;\n\n// Draft payload (for sheet `orders`)\nconst order_draft = {\n  order_id,\n  created_at: nowIso,\n  updated_at: nowIso,\n  status: \"DRAFT\",\n  channel: ctxNode.channel || \"whatsapp\",\n  ticket_id: ctxNode.ticket_id,\n  // optional fields if you have the columns:\n  thread_id: ctxNode.thread_id || null,\n  customer_id: ctxNode.customer_id || null,\n  total_amount,\n  currency: \"IDR\",\n  payment_status: \"UNPAID\",\n  payment_due_at: null,\n  idempotency_key,\n  source_message_id: ctxNode.last_message?.message_id || null,\n  meta_json: JSON.stringify({\n    needs_review: needsReview,\n    intent: ai.intent || \"unknown\",\n    handoff: ai.handoff || null,\n    ai_entities: ai.entities || {},\n    raw_action: createAction,\n  }),\n};\n\n// Return single item carrying both draft + items\nreturn [{\n  json: {\n    ...ctxNode,\n    ai,\n    order_id,\n    order_draft,\n    order_items: resolvedItems,\n  }\n}];\n"
+      },
+      "id": "866988e0-976c-48de-aabd-73ea74e82d50",
+      "name": "Code - Build Order Draft Payload",
       "type": "n8n-nodes-base.code",
       "typeVersion": 1,
       "position": [
-        6600,
-        -80
-      ],
-      "parameters": {
-        "jsCode": "const ai = $json.ai || {};\nconst actions = Array.isArray(ai.actions) ? ai.actions : [];\nconst hasAction = (t) => actions.some(a => a && a.type === t);\nconst handoff = (ai.handoff && (ai.handoff.required || ai.handoff.needed)) || hasAction('HANDOFF');\nconst createOrder = hasAction('CREATE_ORDER_DRAFT');\nreturn [{json:{...$json, ai_flags:{handoff, create_order:createOrder}}}];\n"
-      }
+        -14144,
+        1728
+      ]
     },
     {
-      "id": "38b7af02-fd62-4b22-a297-486c5fb0a317",
-      "name": "IF - Create Order Draft?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2,
-      "position": [
-        6900,
-        -80
-      ],
       "parameters": {
-        "conditions": {
-          "boolean": [
-            {
-              "value1": "={{$json.ai_flags.create_order}}",
-              "operation": "isTrue"
-            }
-          ]
-        }
-      }
-    },
-    {
-      "id": "3299e1f9-3362-4cff-8772-81bf138a7387",
-      "name": "GS - Append Order Draft",
-      "type": "n8n-nodes-base.googleSheets",
-      "typeVersion": 4,
-      "position": [
-        7150,
-        -140
-      ],
-      "parameters": {
-        "authentication": "oAuth2",
         "operation": "append",
-        "documentId": "={{$env.GSHEET_ID}}",
-        "sheetName": "orders",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "=17PTHDWlYUr3J81oJ-rP9ITsUaWV6ULSzTb2iX6_oCsY"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 538802479,
+          "mode": "list",
+          "cachedResultName": "order_items",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/17PTHDWlYUr3J81oJ-rP9ITsUaWV6ULSzTb2iX6_oCsY/edit#gid=538802479"
+        },
         "columns": {
           "mappingMode": "defineBelow",
           "value": {
+            "order_item_id": "={{$json.order_item_id}}",
             "order_id": "={{$json.order_id}}",
-            "created_at": "={{new Date().toISOString()}}",
-            "updated_at": "={{new Date().toISOString()}}",
-            "status": "draft",
-            "channel": "={{$json.channel}}",
-            "ticket_id": "={{$json.ticket_id}}",
-            "customer_id": "={{$json.customer_id}}",
-            "customer_name": "={{$json.name || ''}}",
-            "customer_contact": "={{$json.phone || $json.email || ''}}",
-            "payment_status": "unpaid",
-            "source_message_id": "={{$json.provider_message_id}}",
-            "idempotency_key": "={{\"order|\"+$json.order_id}}",
-            "meta_json": "={{JSON.stringify($json.ai || {})}}"
-          }
+            "product_id": "={{$json.product_id}}",
+            "sku": "={{$json.sku}}",
+            "product_name": "={{$json.product_name}}",
+            "qty": "={{$json.qty}}",
+            "unit_price": "={{$json.unit_price}}",
+            "line_total": "={{$json.line_total}}",
+            "created_at": "={{$json.created_at}}",
+            "uom": "={{$json.uom}}",
+            "notes": "={{$json.notes}}",
+            "meta_json": "={{$json.meta_json}}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "order_item_id",
+              "displayName": "order_item_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "order_id",
+              "displayName": "order_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "product_id",
+              "displayName": "product_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "sku",
+              "displayName": "sku",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "product_name",
+              "displayName": "product_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "qty",
+              "displayName": "qty",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "unit_price",
+              "displayName": "unit_price",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "line_total",
+              "displayName": "line_total",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "uom",
+              "displayName": "uom",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "notes",
+              "displayName": "notes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "meta_json",
+              "displayName": "meta_json",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
         },
         "options": {}
-      }
-    },
-    {
-      "id": "07044ba9-8ce9-4ddd-8e0f-88814fdb45aa",
-      "name": "IF - Handoff Needed?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2,
+      },
+      "id": "574d8787-6cd6-4806-883e-eaff6b1c998f",
+      "name": "GS - Append Order Items",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
       "position": [
-        7400,
-        -80
+        -13376,
+        1728
       ],
-      "parameters": {
-        "conditions": {
-          "boolean": [
-            {
-              "value1": "={{$json.ai_flags.handoff}}",
-              "operation": "isTrue"
-            }
-          ]
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "czxwVduaeCAJOXrr",
+          "name": "Test_Google Sheets account"
         }
       }
     },
     {
-      "id": "6998d2ff-0075-4aff-a1aa-fe9f2873b4c1",
-      "name": "GS - Update Ticket Handoff",
+      "parameters": {
+        "jsCode": "// Expand $json.order_items array into n8n items for append\nconst order_id = $json.order_id;\nconst itemsArr = Array.isArray($json.order_items) ? $json.order_items : [];\n\nconst genItemId = (prefix=\"OIT\") => {\n  const d = new Date();\n  const y = d.getUTCFullYear();\n  const m = String(d.getUTCMonth()+1).padStart(2,'0');\n  const day = String(d.getUTCDate()).padStart(2,'0');\n  const rand = Math.random().toString(16).slice(2, 8).toUpperCase();\n  return `${prefix}${y}${m}${day}${rand}`;\n};\n\nconst nowIso = new Date().toISOString();\n\nreturn itemsArr.map(it => ({\n  json: {\n    order_item_id: genItemId(),\n    order_id,\n    product_id: it.product_id || null,\n    sku: it.sku,\n    product_name: it.product_name || \"\",\n    qty: it.qty,\n    unit_price: it.unit_price,\n    line_total: it.line_total,\n    created_at: nowIso,\n    uom: it.uom || null,\n    notes: \"\",\n    meta_json: it.meta_json || \"{}\",\n  }\n}));\n"
+      },
+      "id": "fa69f107-8e09-4fc4-b31d-467b56b9e012",
+      "name": "Code - Expand Order Items",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        -13632,
+        1728
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const ai = $json.ai || {};\nconst actions = Array.isArray(ai.actions) ? ai.actions : [];\n\n// case-insensitive + null-safe\nconst hasAction = (t) =>\n  actions.some(a => (a?.type || \"\").toUpperCase() === String(t).toUpperCase());\n\n// handoff flag (support required/needed + action HANDOFF)\nconst handoff =\n  ai?.handoff?.needed === true ||\n  ai?.handoff?.required === true ||\n  hasAction(\"HANDOFF\");\n\n// create_order flag (based on action)\nconst create_order =\n  hasAction(\"CREATE_ORDER_DRAFT\") ||\n  (typeof ai.intent === \"string\" && ai.intent.toLowerCase().includes(\"order\"));\n\n// should_reply flag (prioritization: NO_REPLY > should_reply field > SEND_REPLY)\nconst should_reply = hasAction(\"NO_REPLY\")\n  ? false\n  : (typeof ai.should_reply === \"boolean\"\n      ? ai.should_reply\n      : hasAction(\"SEND_REPLY\") ? true : true);\n\n// optional helper flags (useful for later IFs/logging)\nconst request_more_info = hasAction(\"REQUEST_MORE_INFO\");\nconst no_reply = hasAction(\"NO_REPLY\") || should_reply === false;\n\nreturn [{\n  json: {\n    ...$json,\n    ai_flags: {\n      handoff,\n      create_order,\n      should_reply,\n      request_more_info,\n      no_reply,\n    }\n  }\n}];\n"
+      },
+      "id": "52f8fcd4-309a-492a-a1f2-6b2de8a85533",
+      "name": "Code - Set AI Flags1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        -14640,
+        1840
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          }
+        },
+        "options": {}
+      },
+      "id": "535681ee-a882-4235-bbed-8778b5e947e9",
+      "name": "IF - Create Order Draft?1",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -14384,
+        1840
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "=17PTHDWlYUr3J81oJ-rP9ITsUaWV6ULSzTb2iX6_oCsY"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 608521577,
+          "mode": "list",
+          "cachedResultName": "orders",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/17PTHDWlYUr3J81oJ-rP9ITsUaWV6ULSzTb2iX6_oCsY/edit#gid=608521577"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "order_id": "={{$json.order_draft.order_id}}",
+            "created_at": "={{$json.order_draft.created_at}}",
+            "updated_at": "={{$json.order_draft.updated_at}}",
+            "status": "={{$json.order_draft.status}}",
+            "channel": "={{$json.order_draft.channel}}",
+            "ticket_id": "={{$json.order_draft.ticket_id}}",
+            "customer_id": "={{$json.order_draft.customer_id}}",
+            "customer_name": "={{$json.name || ''}}",
+            "customer_contact": "={{$json.phone || $json.email || ''}}",
+            "payment_status": "unpaid",
+            "meta_json": "={{$json.order_draft.meta_json}}",
+            "idempotency_key": "={{$json.order_draft.idempotency_key}}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "order_id",
+              "displayName": "order_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "updated_at",
+              "displayName": "updated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "channel",
+              "displayName": "channel",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ticket_id",
+              "displayName": "ticket_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "customer_id",
+              "displayName": "customer_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "customer_name",
+              "displayName": "customer_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "customer_contact",
+              "displayName": "customer_contact",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "shipping_address",
+              "displayName": "shipping_address",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "subtotal",
+              "displayName": "subtotal",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "discount",
+              "displayName": "discount",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "tax",
+              "displayName": "tax",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "shipping_fee",
+              "displayName": "shipping_fee",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "grand_total",
+              "displayName": "grand_total",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "currency",
+              "displayName": "currency",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "notes",
+              "displayName": "notes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "invoice_id",
+              "displayName": "invoice_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "invoice_due_at",
+              "displayName": "invoice_due_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "invoice_url",
+              "displayName": "invoice_url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "payment_status",
+              "displayName": "payment_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "payment_due_at",
+              "displayName": "payment_due_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "idempotency_key",
+              "displayName": "idempotency_key",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "source_message_id",
+              "displayName": "source_message_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "meta_json",
+              "displayName": "meta_json",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "e8943ed1-854f-47e7-b4a0-f0ac83a48f9a",
+      "name": "GS - Append Order Draft1",
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4,
       "position": [
-        7650,
-        -140
+        -13888,
+        1728
       ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "czxwVduaeCAJOXrr",
+          "name": "Test_Google Sheets account"
+        }
+      }
+    },
+    {
       "parameters": {
-        "authentication": "oAuth2",
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "6372fcbd-4afc-4cd7-b4a6-6b015075fcfd",
+              "leftValue": "={{$json.ai_flags.handoff}}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "38d3c66b-7828-4182-9e4c-9609e216a87a",
+      "name": "IF - Handoff Needed?1",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -13120,
+        1856
+      ]
+    },
+    {
+      "parameters": {
         "operation": "update",
-        "documentId": "={{$env.GSHEET_ID}}",
-        "sheetName": "tickets",
-        "keyColumn": "ticket_id",
-        "keyValue": "={{$json.ticket_id}}",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "=17PTHDWlYUr3J81oJ-rP9ITsUaWV6ULSzTb2iX6_oCsY"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 110569801,
+          "mode": "list",
+          "cachedResultName": "tickets",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/17PTHDWlYUr3J81oJ-rP9ITsUaWV6ULSzTb2iX6_oCsY/edit#gid=110569801"
+        },
         "columns": {
           "mappingMode": "defineBelow",
           "value": {
             "handoff_flag": "TRUE",
             "handoff_reason": "={{($json.ai && $json.ai.handoff && ($json.ai.handoff.reason || $json.ai.handoff.to)) || 'handoff_requested'}}",
-            "updated_at": "={{new Date().toISOString()}}"
-          }
+            "updated_at": "={{new Date().toISOString()}}",
+            "row_number": 0
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "ticket_id",
+              "displayName": "ticket_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "updated_at",
+              "displayName": "updated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "priority",
+              "displayName": "priority",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "channel",
+              "displayName": "channel",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "customer_ref",
+              "displayName": "customer_ref",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "requester_name",
+              "displayName": "requester_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "requester_contact",
+              "displayName": "requester_contact",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "thread_id",
+              "displayName": "thread_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "subject",
+              "displayName": "subject",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "description",
+              "displayName": "description",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "category",
+              "displayName": "category",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "assignee",
+              "displayName": "assignee",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "sla_due_at",
+              "displayName": "sla_due_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "last_inbound_at",
+              "displayName": "last_inbound_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "last_outbound_at",
+              "displayName": "last_outbound_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "last_message_snippet",
+              "displayName": "last_message_snippet",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "unread_flag",
+              "displayName": "unread_flag",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "source_message_id",
+              "displayName": "source_message_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "dedupe_key",
+              "displayName": "dedupe_key",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "tags",
+              "displayName": "tags",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "meta_json",
+              "displayName": "meta_json",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "conversation_summary",
+              "displayName": "conversation_summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "facts_json",
+              "displayName": "facts_json",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "stage",
+              "displayName": "stage",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "handoff_flag",
+              "displayName": "handoff_flag",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "handoff_reason",
+              "displayName": "handoff_reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "reopened_at",
+              "displayName": "reopened_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "closed_at",
+              "displayName": "closed_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "last_ai_at",
+              "displayName": "last_ai_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
         },
         "options": {}
-      }
-    },
-    {
-      "id": "540fee9c-d371-45d2-b0a7-23b63ec78697",
-      "name": "Code - Build Order Draft Payload",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 1,
-      "position": [
-        7000,
-        -200
-      ],
-      "parameters": {
-        "jsCode": "const order_id = 'ORD' + new Date().toISOString().slice(0,10).replaceAll('-','') + String(Math.floor(Math.random()*1e6)).padStart(6,'0');\nreturn [{json:{...$json, order_id}}];\n"
-      }
-    },
-    {
-      "id": "34498533-7d63-4f6f-a090-3622f844a4cb",
-      "name": "GS - Append Order Items",
+      },
+      "id": "42e2bf4b-d02d-4af5-a377-2f211b0b8a44",
+      "name": "GS - Update Ticket Handoff1",
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4,
       "position": [
-        7350,
-        -200
+        -12880,
+        1728
       ],
-      "parameters": {
-        "authentication": "oAuth2",
-        "operation": "append",
-        "documentId": "={{$env.GSHEET_ID}}",
-        "sheetName": "order_items",
-        "columns": {
-          "mappingMode": "defineBelow",
-          "value": {
-            "order_item_id": "={{'ITM'+new Date().toISOString().slice(0,10).replaceAll('-','')+String(Math.floor(Math.random()*1e6)).padStart(6,'0')}}",
-            "order_id": "={{$json.order_id}}",
-            "product_id": "={{$json.item.product_id || ''}}",
-            "sku": "={{$json.item.sku || ''}}",
-            "product_name": "={{$json.item.name || ''}}",
-            "qty": "={{String($json.item.qty || 1)}}",
-            "unit_price": "={{String($json.item.unit_price || '')}}",
-            "line_total": "={{String($json.item.line_total || '')}}",
-            "created_at": "={{new Date().toISOString()}}",
-            "uom": "={{$json.item.uom || ''}}",
-            "notes": "={{$json.item.notes || ''}}",
-            "meta_json": "={{JSON.stringify($json.item)}}"
-          }
-        },
-        "options": {}
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "czxwVduaeCAJOXrr",
+          "name": "Test_Google Sheets account"
+        }
       }
     },
     {
-      "id": "2da3777d-5cb6-4365-9ee9-b0be0b072f6e",
-      "name": "Code - Expand Order Items",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 1,
-      "position": [
-        7150,
-        -200
-      ],
       "parameters": {
-        "jsCode": "const ai = $json.ai || {};\nconst items = Array.isArray(ai.items) ? ai.items : [];\nconst entitySku = ai.entities && ai.entities.product_sku ? ai.entities.product_sku : null;\nconst entityQty = ai.entities && ai.entities.qty ? Number(ai.entities.qty) : null;\nconst fallback = entitySku ? [{sku: entitySku, qty: entityQty || 1}] : [];\nconst all = items.length ? items : fallback;\nreturn all.map(item => ({json:{...$json, item}}));\n"
-      }
+        "httpMethod": "POST",
+        "path": "cdn-wf1-unified-v1",
+        "options": {}
+      },
+      "id": "e7ef0ae2-89d0-4d39-ba35-7ccea68174b5",
+      "name": "Webhook Inbound Unified v1",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -14640,
+        832
+      ],
+      "webhookId": "9ed332e1-abf7-432f-89b9-ed3a6970823a"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -12224,
+        1200
+      ],
+      "id": "216f957c-497b-4102-844c-949daaa443d6",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-goog-api-key",
+              "value": "AIzaSyA8P3FK7X1FdrFlyvn-3KGdfSiTs2y-pUM"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "contents",
+              "value": "={{[  {    \"role\": \"user\",    \"parts\": [      {        \"text\": $json.llm.prompt_text      }    ]  }]}}"
+            },
+            {
+              "name": "generationConfig",
+              "value": "={{ { \"temperature\": 0.2, \"responseMimeType\": \"application/json\" } }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {}
+        }
+      },
+      "id": "c66f30ea-dc83-4db0-803c-fb494750d9d1",
+      "name": "HTTP - LLM Chat (AI compatible)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        -11888,
+        1472
+      ]
     }
   ],
   "connections": {
-    "Webhook Inbound Unified v1": {
-      "main": [
-        [
-          {
-            "node": "Code - Normalize Inbound",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Code - Normalize Inbound": {
       "main": [
         [
@@ -911,8 +3388,7 @@
             "type": "main",
             "index": 0
           }
-        ],
-        []
+        ]
       ]
     },
     "Code - Build Dedupe Key": {
@@ -990,8 +3466,7 @@
             "type": "main",
             "index": 0
           }
-        ],
-        []
+        ]
       ]
     },
     "GS - Upsert Thread Lock (Acquire)": {
@@ -1111,6 +3586,11 @@
             "node": "HTTP - RAG Retrieve (Vector DB)",
             "type": "main",
             "index": 0
+          },
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
           }
         ]
       ]
@@ -1130,9 +3610,9 @@
       "main": [
         [
           {
-            "node": "Code - Compose Prompt + Guardrails",
+            "node": "Merge",
             "type": "main",
-            "index": 0
+            "index": 1
           }
         ]
       ]
@@ -1141,18 +3621,7 @@
       "main": [
         [
           {
-            "node": "HTTP - LLM Chat (OpenAI compatible)",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "HTTP - LLM Chat (OpenAI compatible)": {
-      "main": [
-        [
-          {
-            "node": "Code - Parse & Validate AI Contract",
+            "node": "HTTP - LLM Chat (AI compatible)",
             "type": "main",
             "index": 0
           }
@@ -1163,7 +3632,7 @@
       "main": [
         [
           {
-            "node": "Code - Set AI Flags",
+            "node": "Code - Set AI Flags1",
             "type": "main",
             "index": 0
           }
@@ -1210,80 +3679,22 @@
         ]
       ]
     },
-    "Code - Set AI Flags": {
-      "main": [
-        [
-          {
-            "node": "IF - Create Order Draft?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "IF - Create Order Draft?": {
-      "main": [
-        [
-          {
-            "node": "Code - Build Order Draft Payload",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "IF - Handoff Needed?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "GS - Append Order Draft": {
-      "main": [
-        [
-          {
-            "node": "Code - Expand Order Items",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "IF - Handoff Needed?": {
-      "main": [
-        [
-          {
-            "node": "GS - Update Ticket Handoff",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "IF - Should Reply?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "GS - Update Ticket Handoff": {
-      "main": [
-        [
-          {
-            "node": "IF - Should Reply?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Code - Build Order Draft Payload": {
       "main": [
         [
           {
-            "node": "GS - Append Order Draft",
+            "node": "GS - Append Order Draft1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Append Order Items": {
+      "main": [
+        [
+          {
+            "node": "IF - Handoff Needed?1",
             "type": "main",
             "index": 0
           }
@@ -1301,11 +3712,102 @@
         ]
       ]
     },
-    "GS - Append Order Items": {
+    "Code - Set AI Flags1": {
       "main": [
         [
           {
-            "node": "IF - Handoff Needed?",
+            "node": "IF - Create Order Draft?1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Create Order Draft?1": {
+      "main": [
+        [
+          {
+            "node": "Code - Build Order Draft Payload",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "IF - Handoff Needed?1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Append Order Draft1": {
+      "main": [
+        [
+          {
+            "node": "Code - Expand Order Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Handoff Needed?1": {
+      "main": [
+        [
+          {
+            "node": "GS - Update Ticket Handoff1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "IF - Should Reply?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Update Ticket Handoff1": {
+      "main": [
+        [
+          {
+            "node": "IF - Should Reply?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook Inbound Unified v1": {
+      "main": [
+        [
+          {
+            "node": "Code - Normalize Inbound",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Code - Compose Prompt + Guardrails",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP - LLM Chat (AI compatible)": {
+      "main": [
+        [
+          {
+            "node": "Code - Parse & Validate AI Contract",
             "type": "main",
             "index": 0
           }
@@ -1313,5 +3815,9 @@
       ]
     }
   },
-  "pinData": {}
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "8d940a4f16e33b542b1d0e3d683b566065197a987a838589844a30fe2cb41c54"
+  }
 }
